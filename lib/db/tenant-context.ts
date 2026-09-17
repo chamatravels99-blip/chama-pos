@@ -17,10 +17,12 @@ export class TenantSecurityError extends Error {
 }
 
 /**
- * Validates that a tenant context is present and valid.
+ * Validates that a tenant context is present and has a valid non-null businessId.
  * Throws a TenantSecurityError if tenant context is missing.
  */
-export function assertTenantContext(context?: Partial<TenantContext> | null): asserts context is TenantContext {
+export function assertTenantContext(
+  context?: Partial<TenantContext> | null
+): asserts context is TenantContext & { businessId: string } {
   if (!context || !context.businessId) {
     throw new TenantSecurityError("Forbidden: Operation rejected due to missing or invalid tenant context.");
   }

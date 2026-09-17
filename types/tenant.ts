@@ -1,7 +1,5 @@
-/**
- * Supported business industries.
- * Flexible enough to support phone shops, clothing, car accessories, electronics, grocery, and general retail.
- */
+import { UserRole } from "./user";
+
 export type IndustryType =
   | "phones_electronics"
   | "clothing_fashion"
@@ -12,12 +10,8 @@ export type IndustryType =
 
 export type SubscriptionTier = "TRIAL" | "STARTER" | "BUSINESS" | "PRO";
 
-export type SubscriptionStatus =
-  | "active"
-  | "trialing"
-  | "past_due"
-  | "canceled"
-  | "suspended";
+export type BusinessStatus = "active" | "inactive" | "suspended";
+export type BranchStatus = "active" | "inactive";
 
 export interface BusinessSettings {
   currency: string;
@@ -29,26 +23,29 @@ export interface BusinessSettings {
   lowStockThresholdDefault: number;
 }
 
+export interface Address {
+  street?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+}
+
 export interface Business {
   _id: string;
   name: string;
   slug: string; // Unique URL identifier / tenant key
-  industry: IndustryType;
-  ownerUserId: string;
-  email: string;
-  phone: string;
-  address?: {
-    street?: string;
-    city?: string;
-    state?: string;
-    postalCode?: string;
-    country?: string;
-  };
-  subscriptionTier: SubscriptionTier;
-  subscriptionStatus: SubscriptionStatus;
-  subscriptionEndsAt?: Date | string;
-  settings: BusinessSettings;
-  isActive: boolean;
+  businessType: string; // e.g. "Car Accessories", "Phone Shop", "Clothing"
+  industry?: IndustryType; // Backward compatible mapped type
+  status: BusinessStatus;
+  isActive?: boolean;
+  ownerUserId?: string;
+  email?: string;
+  phone?: string;
+  address?: Address;
+  subscriptionTier?: SubscriptionTier;
+  subscriptionStatus?: string;
+  settings?: BusinessSettings;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -57,30 +54,28 @@ export interface Branch {
   _id: string;
   businessId: string; // Tenant reference
   name: string;
-  code: string; // e.g. "CMB-01", "KND-01"
+  code: string; // e.g. "CMB-01", "NGB-01"
+  address?: Address;
   phone?: string;
   email?: string;
-  address?: {
-    street?: string;
-    city?: string;
-    state?: string;
-    postalCode?: string;
-    country?: string;
-  };
-  isMain: boolean; // Main branch flag
-  isActive: boolean;
+  status: BranchStatus;
+  isActive?: boolean;
+  isMain?: boolean;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
 
 /**
- * Server-side validated tenant context passed into services/queries.
- * Never constructed directly from untrusted client input.
+ * Reusable server-side validated tenant context.
+ * Constructed ONLY from authenticated session.
+ * Never trust a businessId supplied by the browser/client.
  */
 export interface TenantContext {
-  businessId: string;
-  currentBranchId?: string;
   userId: string;
-  userRole: string;
+  businessId: string | null; // Null for PLATFORM_ADMIN
+  branchIds: string[];
+  role: UserRole;
   businessSlug?: string;
+  businessName?: string;
+  activeBranchId?: string;
 }

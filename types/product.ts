@@ -1,39 +1,33 @@
-/**
- * Specific industry custom attributes contracts.
- * These illustrate how the extensible schema accommodates diverse verticals cleanly.
- */
+export type ProductStatus = "active" | "inactive";
 
-// Phone shop attributes
+// Industry-specific attribute extensions
 export interface PhoneAttributes {
   imei?: string;
   serialNumber?: string;
-  storage?: string; // e.g. "128GB", "256GB"
+  storage?: string;
   color?: string;
   condition?: "new" | "open_box" | "refurbished" | "used";
   batteryHealth?: number;
   warrantyMonths?: number;
 }
 
-// Clothing & Fashion attributes
 export interface ClothingAttributes {
-  size?: string; // "XS", "S", "M", "L", "XL", "XXL", "32x30"
+  size?: string;
   color?: string;
-  material?: string; // "Cotton", "Polyester", "Denim"
+  material?: string;
   season?: string;
   gender?: "unisex" | "men" | "women" | "kids";
 }
 
-// Car accessories & auto parts attributes
 export interface CarAccessoryAttributes {
   brand?: string;
   partNumber?: string;
   oemNumber?: string;
-  compatibleVehicleMake?: string[]; // ["Toyota", "Honda", "Nissan"]
-  compatibleVehicleModels?: string[]; // ["Corolla 2018-2022", "Civic 2016-2021"]
+  compatibleVehicleMake?: string[];
+  compatibleVehicleModels?: string[];
   warrantyMonths?: number;
 }
 
-// Generic attributes map
 export type IndustryAttributes =
   | PhoneAttributes
   | ClothingAttributes
@@ -44,15 +38,16 @@ export interface ProductVariant {
   _id?: string;
   sku: string;
   barcode?: string;
-  name: string; // e.g. "iPhone 15 Pro - 256GB Blue Titanium" or "Cotton T-Shirt - Black / XL"
+  name: string;
   costPrice: number;
-  sellingPrice: number;
-  stockByBranch: Array<{
+  price: number;
+  sellingPrice?: number; // Backward compatibility alias
+  stockByBranch?: Array<{
     branchId: string;
     quantity: number;
     lowStockThreshold?: number;
   }>;
-  attributes: Record<string, string | number | boolean>;
+  attributes?: Record<string, string | number | boolean>;
 }
 
 export interface Category {
@@ -70,25 +65,25 @@ export interface Product {
   name: string;
   sku: string; // Base SKU
   barcode?: string;
-  description?: string;
   categoryId?: string;
   categoryName?: string;
-  brand?: string;
-  unit: string; // "pcs", "kg", "meter", "pair", etc.
+  price: number; // Retail / Selling price
+  sellingPrice?: number; // Alias for price
   costPrice: number;
-  sellingPrice: number;
+  status: ProductStatus;
+  isActive?: boolean;
+  description?: string;
+  brand?: string;
+  unit?: string;
   taxExempt?: boolean;
-  hasVariants: boolean;
-  variants: ProductVariant[];
-  // Industry-specific flexible payload
+  hasVariants?: boolean;
+  variants?: ProductVariant[];
   industryAttributes?: IndustryAttributes;
-  // Multi-branch aggregated stock or branch breakdown
-  stockByBranch: Array<{
+  stockByBranch?: Array<{
     branchId: string;
     quantity: number;
     lowStockThreshold: number;
   }>;
-  isActive: boolean;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

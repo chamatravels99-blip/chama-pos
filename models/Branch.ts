@@ -21,6 +21,12 @@ const BranchSchema = new Schema<BranchDocument>(
       postalCode: { type: String },
       country: { type: String },
     },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
     isMain: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
   },
@@ -31,7 +37,7 @@ const BranchSchema = new Schema<BranchDocument>(
 
 // Enforce unique branch code per business/tenant
 BranchSchema.index({ businessId: 1, code: 1 }, { unique: true });
-BranchSchema.index({ businessId: 1, isActive: 1 });
+BranchSchema.index({ businessId: 1, status: 1 });
 
 export const Branch: Model<BranchDocument> =
   mongoose.models.Branch || mongoose.model<BranchDocument>("Branch", BranchSchema);

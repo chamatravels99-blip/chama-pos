@@ -43,7 +43,7 @@ export default function SettingsPage() {
                 <div>
                   <span className="text-slate-400 block mb-1 font-medium">Industry Classification</span>
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 capitalize text-slate-800">
-                    {mockCurrentBusiness.industry.replace("_", " ")}
+                    {(mockCurrentBusiness.industry || mockCurrentBusiness.businessType).replace("_", " ")}
                   </div>
                 </div>
                 <div>

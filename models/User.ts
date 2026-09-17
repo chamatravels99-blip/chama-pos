@@ -12,34 +12,45 @@ const UserSchema = new Schema<UserDocument>(
       default: null,
       index: true,
     },
+    branchIds: {
+      type: [String],
+      default: [],
+    },
+    assignedBranchIds: {
+      type: [String],
+      default: [],
+    },
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
+    email: { type: String, required: true, lowercase: true, trim: true, unique: true },
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
       enum: [
-        "SUPER_ADMIN",
+        "PLATFORM_ADMIN",
         "BUSINESS_OWNER",
         "MANAGER",
         "CASHIER",
         "STOCK_MANAGER",
         "ACCOUNTANT",
+        "SUPER_ADMIN",
       ],
       default: "CASHIER",
       required: true,
       index: true,
     },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
     avatarUrl: { type: String },
     phone: { type: String },
-    assignedBranchIds: {
-      type: [String],
-      default: [],
-    },
     permissions: {
       type: [String],
       default: [],
     },
-    isActive: { type: Boolean, default: true, index: true },
+    isActive: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
   },
   {
@@ -48,8 +59,8 @@ const UserSchema = new Schema<UserDocument>(
 );
 
 // Compound index for user lookups within a business
-UserSchema.index({ businessId: 1, email: 1 }, { unique: true });
-UserSchema.index({ email: 1 }); // For super-admin & global login lookups
+UserSchema.index({ businessId: 1, email: 1 });
+UserSchema.index({ businessId: 1, status: 1 });
 
 export const User: Model<UserDocument> =
   mongoose.models.User || mongoose.model<UserDocument>("User", UserSchema);

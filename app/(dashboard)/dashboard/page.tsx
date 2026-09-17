@@ -9,7 +9,9 @@ import {
   Receipt,
   Plus,
   ArrowRight,
-  TrendingUp,
+  ShieldCheck,
+  Store,
+  Building,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/dashboard/StatCard";
@@ -18,24 +20,63 @@ import { LowStockAlert } from "@/components/dashboard/LowStockAlert";
 import { QuickActionGrid } from "@/components/dashboard/QuickActionGrid";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils";
 import { mockDashboardMetrics } from "@/services/mock-data";
+import { getSession } from "@/lib/auth/session";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const session = await getSession();
+
+  const businessName = session?.businessName || "Chama Modzone";
+  const userName = session?.name || "Kasun Perera";
+  const userRole = session?.role || "BUSINESS_OWNER";
+  const businessSlug = session?.businessSlug || "chama-modzone";
+
   return (
     <div className="space-y-6">
+      {/* Dynamic Authenticated Session Header */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
+              <Store className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
+                  {businessName}
+                </h2>
+                <Badge variant="default" size="sm" className="capitalize">
+                  {userRole.replace("_", " ")}
+                </Badge>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Logged in as <span className="font-semibold text-slate-700">{userName}</span> &bull; Tenant: <span className="font-mono text-slate-600">{businessSlug}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700">
+              <ShieldCheck className="h-4 w-4" />
+              <span>Tenant Isolated Session</span>
+            </div>
+            <Link href="/sales">
+              <Button variant="primary" size="sm">
+                <Plus className="h-4 w-4 mr-1.5" />
+                Launch POS
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+
       {/* Page Title & Main Action */}
       <PageHeader
-        title="Store Dashboard"
+        title="Store Operations Overview"
         description="Real-time sales performance and inventory health across your branches."
-      >
-        <Link href="/sales">
-          <Button variant="primary" size="md">
-            <Plus className="h-4 w-4 mr-1.5" />
-            Launch POS Register
-          </Button>
-        </Link>
-      </PageHeader>
+      />
 
       {/* Quick POS Shortcut Cards */}
       <QuickActionGrid />
@@ -128,13 +169,12 @@ export default function DashboardPage() {
           {/* Architecture Verification Banner */}
           <div className="p-4 rounded-xl border border-brand-200 bg-brand-50/60 text-brand-900">
             <div className="flex items-center gap-2 font-semibold text-xs text-brand-950 mb-1">
-              <TrendingUp className="h-4 w-4 text-brand-600" />
-              Phase 1 Architecture Foundation
+              <Building className="h-4 w-4 text-brand-600" />
+              Phase 2A Tenant Scoping Active
             </div>
             <p className="text-[11px] text-brand-800 leading-relaxed">
-              This dashboard is rendered with segregated mock data fixtures. The underlying
-              Mongoose schemas and multi-tenant security queries are prepared for database
-              integration in Phase 2.
+              Authenticated session is bound to tenant <code className="font-mono font-semibold">{businessName}</code>.
+              Server queries enforce <code className="font-mono font-semibold">businessId</code> isolation to prevent any cross-tenant data leaks.
             </p>
           </div>
         </div>

@@ -38,6 +38,11 @@ const BusinessSchema = new Schema<BusinessDocument>(
       trim: true,
       index: true,
     },
+    businessType: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     industry: {
       type: String,
       enum: [
@@ -48,11 +53,16 @@ const BusinessSchema = new Schema<BusinessDocument>(
         "electronics",
         "general_retail",
       ],
-      required: true,
     },
-    ownerUserId: { type: String, required: true, index: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
-    phone: { type: String, required: true },
+    status: {
+      type: String,
+      enum: ["active", "inactive", "suspended"],
+      default: "active",
+      index: true,
+    },
+    ownerUserId: { type: String, index: true },
+    email: { type: String, lowercase: true, trim: true },
+    phone: { type: String },
     address: AddressSchema,
     subscriptionTier: {
       type: String,
@@ -61,21 +71,16 @@ const BusinessSchema = new Schema<BusinessDocument>(
     },
     subscriptionStatus: {
       type: String,
-      enum: ["active", "trialing", "past_due", "canceled", "suspended"],
-      default: "trialing",
+      default: "active",
     },
-    subscriptionEndsAt: { type: Date },
     settings: { type: BusinessSettingsSchema, default: () => ({}) },
-    isActive: { type: Boolean, default: true, index: true },
+    isActive: { type: Boolean, default: true },
   },
   {
     timestamps: true,
   }
 );
 
-// Indexes for high performance multi-tenant lookups
-BusinessSchema.index({ slug: 1 });
-BusinessSchema.index({ isActive: 1, subscriptionStatus: 1 });
 
 export const Business: Model<BusinessDocument> =
   mongoose.models.Business || mongoose.model<BusinessDocument>("Business", BusinessSchema);

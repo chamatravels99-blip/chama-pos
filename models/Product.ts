@@ -18,7 +18,8 @@ const ProductVariantSchema = new Schema(
     barcode: { type: String },
     name: { type: String, required: true },
     costPrice: { type: Number, required: true, default: 0 },
-    sellingPrice: { type: Number, required: true, default: 0 },
+    price: { type: Number, required: true, default: 0 },
+    sellingPrice: { type: Number, default: 0 },
     stockByBranch: [BranchStockSchema],
     attributes: { type: Map, of: Schema.Types.Mixed, default: {} },
   },
@@ -41,7 +42,14 @@ const ProductSchema = new Schema<ProductDocument>(
     brand: { type: String },
     unit: { type: String, default: "pcs" },
     costPrice: { type: Number, required: true, default: 0 },
-    sellingPrice: { type: Number, required: true, default: 0 },
+    price: { type: Number, required: true, default: 0 },
+    sellingPrice: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
     taxExempt: { type: Boolean, default: false },
     hasVariants: { type: Boolean, default: false },
     variants: [ProductVariantSchema],
@@ -57,11 +65,21 @@ const ProductSchema = new Schema<ProductDocument>(
   }
 );
 
+// Pre-save middleware to synchronize price and sellingPrice
+ProductSchema.pre("save", function (next) {
+  if (this.price !== undefined && !this.sellingPrice) {
+    this.sellingPrice = this.price;
+  } else if (this.sellingPrice !== undefined && !this.price) {
+    this.price = this.sellingPrice;
+  }
+  next();
+});
+
 // Compound indexes strictly isolating products by tenant
 ProductSchema.index({ businessId: 1, sku: 1 }, { unique: true });
 ProductSchema.index({ businessId: 1, barcode: 1 }, { sparse: true });
 ProductSchema.index({ businessId: 1, categoryId: 1 });
-ProductSchema.index({ businessId: 1, isActive: 1 });
+ProductSchema.index({ businessId: 1, status: 1 });
 
 export const Product: Model<ProductDocument> =
   mongoose.models.Product || mongoose.model<ProductDocument>("Product", ProductSchema);

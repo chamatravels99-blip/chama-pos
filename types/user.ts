@@ -1,10 +1,13 @@
 export type UserRole =
-  | "SUPER_ADMIN" // Platform SaaS Owner (cross-tenant access)
+  | "PLATFORM_ADMIN" // Platform SaaS Owner (cross-tenant access)
   | "BUSINESS_OWNER" // Full access to specific tenant business
   | "MANAGER" // Store management, discounts, voids, reports
   | "CASHIER" // POS checkout, register closing, customer lookup
   | "STOCK_MANAGER" // Inventory, stock receiving, supplier orders
-  | "ACCOUNTANT"; // Invoices, expenses, financial reports
+  | "ACCOUNTANT" // Invoices, expenses, financial reports
+  | "SUPER_ADMIN"; // Backward compatible alias for PLATFORM_ADMIN
+
+export type UserStatus = "active" | "inactive";
 
 export type Permission =
   // Sales & POS
@@ -36,23 +39,25 @@ export type Permission =
   | "branches:manage"
   | "users:manage"
   | "settings:manage"
-  // Super Admin Platform
+  // Platform Admin
   | "platform:manage_businesses"
   | "platform:manage_subscriptions"
   | "platform:system_metrics";
 
 export interface User {
   _id: string;
-  businessId: string | null; // Null for SUPER_ADMIN
+  businessId: string | null; // Null for PLATFORM_ADMIN
+  branchIds: string[]; // Assigned branch locations
+  assignedBranchIds?: string[]; // Backward compatibility alias
   name: string;
   email: string;
+  passwordHash?: string;
   role: UserRole;
+  status: UserStatus;
+  isActive?: boolean;
   avatarUrl?: string;
   phone?: string;
-  // Multi-branch assignment: empty or undefined means all branches for this business
-  assignedBranchIds: string[];
-  permissions: Permission[];
-  isActive: boolean;
+  permissions?: Permission[];
   lastLoginAt?: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -68,6 +73,19 @@ export interface SessionUser {
   role: UserRole;
   businessId: string | null;
   businessName?: string;
-  assignedBranchIds: string[];
+  businessSlug?: string;
+  branchIds: string[];
+  activeBranchId?: string;
+}
+
+export interface SessionPayload {
+  userId: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  businessId: string | null;
+  businessName?: string;
+  businessSlug?: string;
+  branchIds: string[];
   activeBranchId?: string;
 }
