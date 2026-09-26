@@ -1,4 +1,4 @@
-import { UserRole } from "./user";
+import { UserRole, BranchAccess, Permission } from "./user";
 
 export type IndustryType =
   | "phones_electronics"
@@ -72,9 +72,12 @@ export interface Branch {
  */
 export interface TenantContext {
   userId: string;
-  businessId: string | null; // Null for PLATFORM_ADMIN
+  username?: string;
+  businessId: string | null; // Null for PLATFORM_ADMIN / PLATFORM_OWNER
+  branchAccess?: BranchAccess;
   branchIds: string[];
   role: UserRole;
+  permissions?: Permission[];
   businessSlug?: string;
   businessName?: string;
   activeBranchId?: string;

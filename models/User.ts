@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
-import { User as IUser, UserRole } from "@/types";
+import { User as IUser } from "@/types";
 
 export interface UserDocument extends Omit<IUser, "_id">, Document {
   passwordHash: string;
@@ -12,6 +12,11 @@ const UserSchema = new Schema<UserDocument>(
       default: null,
       index: true,
     },
+    branchAccess: {
+      type: String,
+      enum: ["ALL_BRANCHES", "SELECTED_BRANCHES"],
+      default: "SELECTED_BRANCHES",
+    },
     branchIds: {
       type: [String],
       default: [],
@@ -20,12 +25,20 @@ const UserSchema = new Schema<UserDocument>(
       type: [String],
       default: [],
     },
+    username: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      sparse: true,
+      index: true,
+    },
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, lowercase: true, trim: true, unique: true },
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
       enum: [
+        "PLATFORM_OWNER",
         "PLATFORM_ADMIN",
         "BUSINESS_OWNER",
         "MANAGER",
@@ -40,8 +53,8 @@ const UserSchema = new Schema<UserDocument>(
     },
     status: {
       type: String,
-      enum: ["active", "inactive"],
-      default: "active",
+      enum: ["ACTIVE", "INACTIVE", "SUSPENDED", "active", "inactive"],
+      default: "ACTIVE",
       index: true,
     },
     avatarUrl: { type: String },
@@ -60,6 +73,7 @@ const UserSchema = new Schema<UserDocument>(
 
 // Compound index for user lookups within a business
 UserSchema.index({ businessId: 1, email: 1 });
+UserSchema.index({ businessId: 1, username: 1 }, { sparse: true });
 UserSchema.index({ businessId: 1, status: 1 });
 
 export const User: Model<UserDocument> =

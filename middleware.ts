@@ -51,7 +51,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 4. Protect all app routes (/dashboard, /products, /sales, etc.)
+  // 4. Protect all app routes (/dashboard, /products, /sales, /users, etc.)
   const isProtectedRoute =
     pathname === "/" ||
     pathname.startsWith("/dashboard") ||
@@ -62,6 +62,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/suppliers") ||
     pathname.startsWith("/expenses") ||
     pathname.startsWith("/reports") ||
+    pathname.startsWith("/users") ||
     pathname.startsWith("/settings") ||
     pathname.startsWith("/admin");
 
@@ -73,10 +74,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // 5. Protect /admin/* specifically - PLATFORM_ADMIN authority only
+  // 5. Protect /admin/* specifically - PLATFORM_OWNER/PLATFORM_ADMIN authority only
   if (pathname.startsWith("/admin")) {
     const isPlatformAdmin =
-      sessionPayload?.role === "PLATFORM_ADMIN" || sessionPayload?.role === "SUPER_ADMIN";
+      sessionPayload?.role === "PLATFORM_OWNER" ||
+      sessionPayload?.role === "PLATFORM_ADMIN" ||
+      sessionPayload?.role === "SUPER_ADMIN";
 
     if (!isPlatformAdmin) {
       // Non-admin user attempting to access platform console -> redirect to dashboard

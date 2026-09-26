@@ -1,6 +1,12 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { SessionPayload, TenantContext, UserRole } from "@/types";
+import {
+  SessionPayload,
+  TenantContext,
+  UserRole,
+  StandardPermission,
+  DEFAULT_ROLE_PERMISSIONS,
+} from "@/types";
 
 export const SESSION_COOKIE_NAME = "chama_session";
 const SESSION_EXPIRATION_TIME = "7d";
@@ -112,23 +118,94 @@ export async function requireAuth(): Promise<SessionPayload> {
 }
 
 /**
+ * Checks if a given role is a platform-level administrator.
+ */
+export function isPlatformRole(role: UserRole): boolean {
+  return role === "PLATFORM_OWNER" || role === "PLATFORM_ADMIN" || role === "SUPER_ADMIN";
+}
+
+/**
  * Server-side role guard requiring one of the specified roles.
- * PLATFORM_ADMIN possesses universal platform administration rights.
+ * PLATFORM_OWNER/PLATFORM_ADMIN possesses universal platform administration rights.
  */
 export async function requireRole(allowedRoles: UserRole[]): Promise<SessionPayload> {
   const session = await requireAuth();
 
-  // Normalize role aliases (e.g. SUPER_ADMIN -> PLATFORM_ADMIN)
-  const normalizedRole = session.role === "SUPER_ADMIN" ? "PLATFORM_ADMIN" : session.role;
-
+  const isPlatform = isPlatformRole(session.role);
   const isAllowed =
     allowedRoles.includes(session.role) ||
-    allowedRoles.includes(normalizedRole) ||
-    normalizedRole === "PLATFORM_ADMIN";
+    (isPlatform && (allowedRoles.includes("PLATFORM_OWNER") || allowedRoles.includes("PLATFORM_ADMIN") || allowedRoles.includes("SUPER_ADMIN")));
 
   if (!isAllowed) {
     throw new AuthorizationError(
       `Access denied. Role "${session.role}" lacks required permissions (${allowedRoles.join(", ")}).`
+    );
+  }
+
+  return session;
+}
+
+/**
+ * Checks if a user/session has a specific permission.
+ */
+export function hasPermission(
+  session: { role: UserRole; permissions?: string[] } | null | undefined,
+  permission: StandardPermission | string
+): boolean {
+  if (!session) return false;
+
+  const role = session.role;
+  if (isPlatformRole(role)) {
+    return true;
+  }
+  if (role === "BUSINESS_OWNER") {
+    return true;
+  }
+
+  // Check explicit assigned permissions
+  if (Array.isArray(session.permissions) && session.permissions.length > 0) {
+    if (session.permissions.includes(permission)) return true;
+
+    // Legacy backward-compatibility alias mapping
+    const legacyMap: Record<string, string> = {
+      "PRODUCT_VIEW": "products:read",
+      "PRODUCT_CREATE": "products:create",
+      "PRODUCT_EDIT": "products:update",
+      "PRODUCT_DELETE": "products:delete",
+      "USER_VIEW": "users:manage",
+      "USER_CREATE": "users:manage",
+      "USER_EDIT": "users:manage",
+      "USER_DISABLE": "users:manage",
+      "BRANCH_VIEW": "branches:manage",
+      "BRANCH_CREATE": "branches:manage",
+      "BRANCH_EDIT": "branches:manage",
+      "STOCK_VIEW": "inventory:read",
+      "STOCK_ADD": "inventory:adjust",
+      "STOCK_ADJUST": "inventory:adjust",
+      "STOCK_TRANSFER": "inventory:transfer",
+      "REPORT_VIEW": "reports:view_sales",
+    };
+
+    if (legacyMap[permission] && session.permissions.includes(legacyMap[permission])) {
+      return true;
+    }
+  }
+
+  // Fall back to default role permissions
+  const defaultPerms = DEFAULT_ROLE_PERMISSIONS[role] || [];
+  return (defaultPerms as string[]).includes(permission);
+}
+
+/**
+ * Server-side guard requiring a specific permission.
+ * Throws an AuthorizationError if the authenticated user lacks this permission.
+ */
+export async function requirePermission(permission: StandardPermission | string): Promise<SessionPayload> {
+  const session = await requireAuth();
+
+  if (!hasPermission(session, permission)) {
+    throw new AuthorizationError(
+      `Forbidden: Lacks required permission "${permission}".`
     );
   }
 
@@ -143,10 +220,9 @@ export async function requireRole(allowedRoles: UserRole[]): Promise<SessionPayl
 export async function getTenantContext(): Promise<TenantContext> {
   const session = await requireAuth();
 
-  const isPlatformAdmin =
-    session.role === "PLATFORM_ADMIN" || session.role === "SUPER_ADMIN";
+  const isPlatform = isPlatformRole(session.role);
 
-  if (!isPlatformAdmin && !session.businessId) {
+  if (!isPlatform && !session.businessId) {
     throw new AuthorizationError(
       "TenantContext Error: Non-admin user is not associated with any active business/tenant."
     );
@@ -154,11 +230,58 @@ export async function getTenantContext(): Promise<TenantContext> {
 
   return {
     userId: session.userId,
+    username: session.username,
     businessId: session.businessId,
+    branchAccess: session.branchAccess || (session.role === "BUSINESS_OWNER" ? "ALL_BRANCHES" : "SELECTED_BRANCHES"),
     branchIds: session.branchIds || [],
     role: session.role,
+    permissions: session.permissions || [],
     businessSlug: session.businessSlug,
     businessName: session.businessName,
     activeBranchId: session.activeBranchId,
   };
+}
+
+/**
+ * Server-side guard verifying access to a specific branch.
+ * Throws an AuthorizationError if the user is unauthorized.
+ */
+export async function requireBranchAccess(branchId?: string): Promise<TenantContext> {
+  const context = await getTenantContext();
+  assertBranchAccess(context, branchId);
+  return context;
+}
+
+/**
+ * Pure authorization check for branch access that works with both Next.js sessions and standalone tests.
+ */
+export function isBranchAllowed(context: TenantContext, branchId?: string): boolean {
+  if (isPlatformRole(context.role)) {
+    return true;
+  }
+
+  const isAllBranches =
+    context.role === "BUSINESS_OWNER" || context.branchAccess === "ALL_BRANCHES";
+
+  if (!branchId || branchId === "ALL") {
+    return isAllBranches;
+  }
+
+  if (isAllBranches) {
+    return true;
+  }
+
+  return (context.branchIds || []).includes(branchId);
+}
+
+/**
+ * Assertion for branch access. Throws AuthorizationError if access is denied.
+ */
+export function assertBranchAccess(context: TenantContext, branchId?: string): void {
+  if (!isBranchAllowed(context, branchId)) {
+    if (!branchId || branchId === "ALL") {
+      throw new AuthorizationError("Forbidden: User does not have access to All Branches.");
+    }
+    throw new AuthorizationError(`Forbidden: User does not have access to branch "${branchId}".`);
+  }
 }

@@ -18,14 +18,17 @@ export async function GET() {
       authenticated: true,
       user: {
         id: session.userId,
+        username: session.username,
         name: session.name,
         email: session.email,
         role: session.role,
         businessId: session.businessId,
         businessName: session.businessName,
         businessSlug: session.businessSlug,
+        branchAccess: session.branchAccess,
         branchIds: session.branchIds,
         activeBranchId: session.activeBranchId,
+        permissions: session.permissions || [],
       },
     },
     { status: 200 }

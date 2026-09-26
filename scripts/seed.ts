@@ -6,7 +6,9 @@ import { Business } from "../models/Business";
 import { Branch } from "../models/Branch";
 import { User } from "../models/User";
 import { Product } from "../models/Product";
+import { AuditLog } from "../models/AuditLog";
 import { hashPassword } from "../lib/auth/password";
+import { DEFAULT_ROLE_PERMISSIONS } from "../types";
 
 // Load .env.local manually if running outside Next.js runtime
 function loadEnv() {
@@ -34,7 +36,7 @@ const DEV_SEED_PASSWORD = "ChamaDev@2026!";
 
 async function seed() {
   console.log("\n============================================================");
-  console.log(" CHAMA POS - DEVELOPMENT SEED SCRIPT (PHASE 2A)");
+  console.log(" CHAMA POS - DEVELOPMENT SEED SCRIPT (PHASE 2B-0)");
   console.log(" WARNING: FOR LOCAL / STAGING DEVELOPMENT ONLY.");
   console.log(" NEVER RUN OR DEPLOY THIS SCRIPT IN PRODUCTION.");
   console.log("============================================================\n");
@@ -56,13 +58,14 @@ async function seed() {
       Branch.deleteMany({}),
       User.deleteMany({}),
       Product.deleteMany({}),
+      AuditLog.deleteMany({}),
     ]);
     console.log("Cleaned.\n");
 
     const sharedPasswordHash = await hashPassword(DEV_SEED_PASSWORD);
 
     // ========================================================================
-    // 1. BUSINESS: Chama Modzone (Car Accessories)
+    // 1. BUSINESS: Chama Modzone (Car Accessories) - Multi-Branch Demonstration
     // ========================================================================
     console.log("1. Seeding Business: Chama Modzone (Car Accessories)...");
     const bizModzone = await Business.create({
@@ -84,7 +87,8 @@ async function seed() {
       subscriptionStatus: "active",
     });
 
-    const branchModzone = await Branch.create({
+    // Branch 1: Colombo Flagship
+    const branchColombo = await Branch.create({
       businessId: bizModzone._id.toString(),
       name: "Colombo Main Flagship",
       code: "CMB-01",
@@ -98,24 +102,108 @@ async function seed() {
       },
     });
 
+    // Branch 2: Kandy Branch
+    const branchKandy = await Branch.create({
+      businessId: bizModzone._id.toString(),
+      name: "Kandy Express Branch",
+      code: "KDY-01",
+      phone: "+94 81 234 5678",
+      status: "active",
+      isMain: false,
+      address: {
+        street: "75 Dalada Veediya",
+        city: "Kandy",
+        state: "Central",
+      },
+    });
+
+    // Business Owner: Kasun Perera (All Branches access)
     const modzoneOwner = await User.create({
       businessId: bizModzone._id.toString(),
-      branchIds: [branchModzone._id.toString()],
+      branchAccess: "ALL_BRANCHES",
+      branchIds: [branchColombo._id.toString(), branchKandy._id.toString()],
       name: "Kasun Perera",
+      username: "kasun.owner",
       email: "owner@chamamodzone.com",
       passwordHash: sharedPasswordHash,
       role: "BUSINESS_OWNER",
-      status: "active",
+      permissions: DEFAULT_ROLE_PERMISSIONS.BUSINESS_OWNER,
+      status: "ACTIVE",
     });
 
-    const modzoneCashier = await User.create({
+    // Manager - Colombo: Kamal Silva
+    const managerColombo = await User.create({
       businessId: bizModzone._id.toString(),
-      branchIds: [branchModzone._id.toString()],
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: [branchColombo._id.toString()],
+      assignedBranchIds: [branchColombo._id.toString()],
+      name: "Kamal Silva",
+      username: "kamal.colombo",
+      email: "manager.colombo@chamamodzone.com",
+      passwordHash: sharedPasswordHash,
+      role: "MANAGER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.MANAGER,
+      status: "ACTIVE",
+    });
+
+    // Manager - Kandy: Nimal Jayawardena
+    const managerKandy = await User.create({
+      businessId: bizModzone._id.toString(),
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: [branchKandy._id.toString()],
+      assignedBranchIds: [branchKandy._id.toString()],
+      name: "Nimal Jayawardena",
+      username: "nimal.kandy",
+      email: "manager.kandy@chamamodzone.com",
+      passwordHash: sharedPasswordHash,
+      role: "MANAGER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.MANAGER,
+      status: "ACTIVE",
+    });
+
+    // Cashier - Colombo: Dinesh Fernando
+    const cashierColombo = await User.create({
+      businessId: bizModzone._id.toString(),
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: [branchColombo._id.toString()],
+      assignedBranchIds: [branchColombo._id.toString()],
       name: "Dinesh Fernando",
+      username: "dinesh.colombo",
+      email: "cashier.colombo@chamamodzone.com",
+      passwordHash: sharedPasswordHash,
+      role: "CASHIER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      status: "ACTIVE",
+    });
+
+    // Legacy Cashier alias account for backward compatibility with previous scripts
+    await User.create({
+      businessId: bizModzone._id.toString(),
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: [branchColombo._id.toString()],
+      assignedBranchIds: [branchColombo._id.toString()],
+      name: "Dinesh Fernando (Alias)",
+      username: "dinesh.cashier",
       email: "cashier@chamamodzone.com",
       passwordHash: sharedPasswordHash,
       role: "CASHIER",
-      status: "active",
+      permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      status: "ACTIVE",
+    });
+
+    // Cashier - Kandy: Ruwan Bandara
+    const cashierKandy = await User.create({
+      businessId: bizModzone._id.toString(),
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: [branchKandy._id.toString()],
+      assignedBranchIds: [branchKandy._id.toString()],
+      name: "Ruwan Bandara",
+      username: "ruwan.kandy",
+      email: "cashier.kandy@chamamodzone.com",
+      passwordHash: sharedPasswordHash,
+      role: "CASHIER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      status: "ACTIVE",
     });
 
     bizModzone.ownerUserId = modzoneOwner._id.toString();
@@ -165,7 +253,7 @@ async function seed() {
         },
       },
     ]);
-    console.log("   -> Chama Modzone seeded with 1 Branch, 2 Users, 3 Products.\n");
+    console.log("   -> Chama Modzone seeded with 2 Branches (Colombo, Kandy), 6 Users, 3 Products.\n");
 
     // ========================================================================
     // 2. BUSINESS: ABC Phone Shop (Phone Shop)
@@ -205,22 +293,28 @@ async function seed() {
 
     const phoneOwner = await User.create({
       businessId: bizPhone._id.toString(),
+      branchAccess: "ALL_BRANCHES",
       branchIds: [branchPhone._id.toString()],
       name: "Rohan De Silva",
+      username: "rohan.owner",
       email: "owner@abcphones.lk",
       passwordHash: sharedPasswordHash,
       role: "BUSINESS_OWNER",
-      status: "active",
+      permissions: DEFAULT_ROLE_PERMISSIONS.BUSINESS_OWNER,
+      status: "ACTIVE",
     });
 
-    const phoneCashier = await User.create({
+    await User.create({
       businessId: bizPhone._id.toString(),
+      branchAccess: "SELECTED_BRANCHES",
       branchIds: [branchPhone._id.toString()],
       name: "Kamal Wickrama",
+      username: "kamal.cashier",
       email: "cashier@abcphones.lk",
       passwordHash: sharedPasswordHash,
       role: "CASHIER",
-      status: "active",
+      permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      status: "ACTIVE",
     });
 
     bizPhone.ownerUserId = phoneOwner._id.toString();
@@ -297,12 +391,15 @@ async function seed() {
 
     const clothingOwner = await User.create({
       businessId: bizClothing._id.toString(),
+      branchAccess: "ALL_BRANCHES",
       branchIds: [branchClothing._id.toString()],
       name: "Anura Jayasuriya",
+      username: "anura.owner",
       email: "owner@xyzclothing.com",
       passwordHash: sharedPasswordHash,
       role: "BUSINESS_OWNER",
-      status: "active",
+      permissions: DEFAULT_ROLE_PERMISSIONS.BUSINESS_OWNER,
+      status: "ACTIVE",
     });
 
     bizClothing.ownerUserId = clothingOwner._id.toString();
@@ -353,19 +450,22 @@ async function seed() {
     console.log("   -> XYZ Clothing seeded with 1 Branch, 1 User, 3 Products.\n");
 
     // ========================================================================
-    // 4. PLATFORM ADMIN: Platform Owner
+    // 4. PLATFORM OWNER / ADMIN: Platform Superadmin
     // ========================================================================
-    console.log("4. Seeding SaaS Platform Owner (PLATFORM_ADMIN)...");
+    console.log("4. Seeding SaaS Platform Owner (PLATFORM_OWNER)...");
     await User.create({
-      businessId: null, // Platform Superadmin has no tenant constraint
+      businessId: null, // Universal platform administration rights
+      branchAccess: "ALL_BRANCHES",
       branchIds: [],
-      name: "Chama Platform Admin",
+      name: "Chama Platform Owner",
+      username: "platform.admin",
       email: "admin@chamapos.com",
       passwordHash: sharedPasswordHash,
-      role: "PLATFORM_ADMIN",
-      status: "active",
+      role: "PLATFORM_OWNER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.PLATFORM_OWNER,
+      status: "ACTIVE",
     });
-    console.log("   -> Platform Admin created (admin@chamapos.com).\n");
+    console.log("   -> Platform Owner created (admin@chamapos.com).\n");
 
     console.log("============================================================");
     console.log(" SEED COMPLETED SUCCESSFULLY!");
@@ -373,15 +473,18 @@ async function seed() {
     console.log("\nDEVELOPMENT TEST CREDENTIALS (PASSWORD FOR ALL: ChamaDev@2026!):");
     console.log("------------------------------------------------------------");
     console.log("1. Chama Modzone (Car Accessories):");
-    console.log("   - Owner:   owner@chamamodzone.com   (Role: BUSINESS_OWNER)");
-    console.log("   - Cashier: cashier@chamamodzone.com (Role: CASHIER)");
+    console.log("   - Owner:             owner@chamamodzone.com          (Role: BUSINESS_OWNER | All Branches)");
+    console.log("   - Manager (Colombo): manager.colombo@chamamodzone.com(Role: MANAGER | Colombo only)");
+    console.log("   - Manager (Kandy):   manager.kandy@chamamodzone.com  (Role: MANAGER | Kandy only)");
+    console.log("   - Cashier (Colombo): cashier.colombo@chamamodzone.com(Role: CASHIER | Colombo only)");
+    console.log("   - Cashier (Kandy):   cashier.kandy@chamamodzone.com  (Role: CASHIER | Kandy only)");
     console.log("\n2. ABC Phone Shop (Phone Shop):");
-    console.log("   - Owner:   owner@abcphones.lk       (Role: BUSINESS_OWNER)");
-    console.log("   - Cashier: cashier@abcphones.lk     (Role: CASHIER)");
+    console.log("   - Owner:             owner@abcphones.lk              (Role: BUSINESS_OWNER)");
+    console.log("   - Cashier:           cashier@abcphones.lk            (Role: CASHIER)");
     console.log("\n3. XYZ Clothing (Clothing Retail):");
-    console.log("   - Owner:   owner@xyzclothing.com    (Role: BUSINESS_OWNER)");
+    console.log("   - Owner:             owner@xyzclothing.com           (Role: BUSINESS_OWNER)");
     console.log("\n4. SaaS Platform Owner Console:");
-    console.log("   - Admin:   admin@chamapos.com       (Role: PLATFORM_ADMIN)");
+    console.log("   - Owner:             admin@chamapos.com              (Role: PLATFORM_OWNER)");
     console.log("============================================================\n");
 
     await mongoose.disconnect();

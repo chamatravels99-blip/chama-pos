@@ -11,11 +11,14 @@ import {
   LogOut,
   Sliders,
   Shield,
+  Layers,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SessionUser } from "@/types";
+import { useBranch } from "@/components/context/BranchContext";
+import { isPlatformRole } from "@/lib/auth/permissions";
 
 export interface HeaderProps {
   onMobileMenuToggle?: () => void;
@@ -26,7 +29,14 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
   const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
-  const [activeBranch, setActiveBranch] = useState("Main Flagship");
+
+  const {
+    branches,
+    selectedBranchId,
+    selectedBranchName,
+    canSelectAllBranches,
+    setSelectedBranch,
+  } = useBranch();
 
   useEffect(() => {
     async function fetchSession() {
@@ -55,6 +65,8 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
   const businessDisplayName = currentUser?.businessName || "Chama POS";
   const userDisplayName = currentUser?.name || "Store User";
   const userRole = currentUser?.role || "BUSINESS_OWNER";
+  const isPlatformAdmin = isPlatformRole(userRole);
+
   const userInitials = userDisplayName
     .split(" ")
     .map((n) => n[0])
@@ -86,7 +98,7 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
                 {businessDisplayName}
               </span>
               <Badge variant="default" size="sm" className="hidden sm:inline-flex capitalize">
-                {userRole.replace("_", " ")}
+                {userRole.replace("_", " ").toLowerCase()}
               </Badge>
             </div>
             {currentUser?.businessSlug && (
@@ -113,35 +125,74 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
             <Building className="h-3.5 w-3.5 text-slate-500" />
             <div className="text-left">
               <span className="hidden sm:inline text-slate-400 font-normal">Branch: </span>
-              <span className="font-semibold text-slate-800">{activeBranch}</span>
+              <span className="font-semibold text-slate-800">{selectedBranchName}</span>
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
           </button>
 
           {branchDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg z-50 animate-in fade-in slide-in-from-top-1">
+            <div className="absolute right-0 mt-2 w-60 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg z-50 animate-in fade-in slide-in-from-top-1">
               <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Assigned Branch Locations
+                Branch Location Context
               </div>
-              {["Main Flagship", "City Express", "Secondary Hub"].map((branchName, idx) => (
+
+              {/* All Branches Option */}
+              {canSelectAllBranches && (
                 <button
-                  key={idx}
+                  type="button"
                   onClick={() => {
-                    setActiveBranch(branchName);
+                    setSelectedBranch("ALL");
                     setBranchDropdownOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
-                    activeBranch === branchName
-                      ? "bg-brand-50 text-brand-700 font-medium"
-                      : "text-slate-700 hover:bg-slate-50"
+                  className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors mb-1 ${
+                    selectedBranchId === "ALL"
+                      ? "bg-brand-50 text-brand-700 font-semibold"
+                      : "text-slate-700 hover:bg-slate-50 font-medium"
                   }`}
                 >
-                  <div className="font-medium text-slate-900">{branchName}</div>
-                  {activeBranch === branchName && (
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-3.5 w-3.5 text-brand-600" />
+                    <span>All Branches (Business-Wide)</span>
+                  </div>
+                  {selectedBranchId === "ALL" && (
                     <CheckCircle2 className="h-4 w-4 text-brand-600 shrink-0" />
                   )}
                 </button>
-              ))}
+              )}
+
+              {/* Individual Branches */}
+              <div className="border-t border-slate-100 pt-1 space-y-0.5 max-h-48 overflow-y-auto">
+                {branches.length === 0 ? (
+                  <div className="px-2.5 py-2 text-xs text-slate-400 italic">No assigned branches</div>
+                ) : (
+                  branches.map((b) => (
+                    <button
+                      key={b._id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedBranch(b._id);
+                        setBranchDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
+                        selectedBranchId === b._id
+                          ? "bg-brand-50 text-brand-700 font-semibold"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span>{b.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">({b.code})</span>
+                        {b.isMain && (
+                          <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded">HQ</span>
+                        )}
+                      </div>
+                      {selectedBranchId === b._id && (
+                        <CheckCircle2 className="h-4 w-4 text-brand-600 shrink-0" />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -180,7 +231,7 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
                 {userDisplayName}
               </div>
               <div className="text-[10px] text-slate-500 font-medium">
-                {userRole.replace("_", " ")}
+                {userRole.replace("_", " ").toLowerCase()}
               </div>
             </div>
             <ChevronDown className="hidden h-3 w-3 text-slate-400 lg:block" />
@@ -196,7 +247,7 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
                 </Badge>
               </div>
               <div className="p-1">
-                {(userRole === "PLATFORM_ADMIN" || userRole === "SUPER_ADMIN") && (
+                {isPlatformAdmin && (
                   <Link
                     href="/admin"
                     onClick={() => setProfileDropdownOpen(false)}
@@ -206,6 +257,14 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
                     Platform Admin Console
                   </Link>
                 )}
+                <Link
+                  href="/users"
+                  onClick={() => setProfileDropdownOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  <Building className="h-3.5 w-3.5 text-slate-400" />
+                  Staff & Users
+                </Link>
                 <Link
                   href="/settings"
                   onClick={() => setProfileDropdownOpen(false)}
