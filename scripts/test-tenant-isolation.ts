@@ -21,6 +21,15 @@ import {
 } from "../lib/auth/session";
 import { hashPassword, verifyPassword } from "../lib/auth/password";
 import { TenantContext, UserRole, DEFAULT_ROLE_PERMISSIONS } from "../types";
+import {
+  createSale,
+  listSales,
+  getSaleById,
+  validateSaleBranchId,
+  resolveSaleActor,
+  SaleValidationError,
+  findSaleCreatedAudit,
+} from "../lib/sales/sale-service";
 
 // Load .env.local manually if running in standalone script
 function loadEnv() {
@@ -546,9 +555,317 @@ async function runIsolationTests() {
     );
     passedCount += 3;
 
+    // ====================================================================
+    // PHASE 2B-1A — POS SALES FOUNDATION
+    // ====================================================================
+
+    // TEST D: "ALL_BRANCHES" cannot be used as the sale branch
+    let allBranchesRejected = false;
+    try {
+      validateSaleBranchId("ALL_BRANCHES");
+    } catch (e) {
+      allBranchesRejected = e instanceof SaleValidationError;
+    }
+    let allAliasRejected = false;
+    try {
+      validateSaleBranchId("ALL");
+    } catch (e) {
+      allAliasRejected = e instanceof SaleValidationError;
+    }
+    assert(
+      allBranchesRejected === true && allAliasRejected === true,
+      "Test D: ALL / ALL_BRANCHES cannot be used as the sale branch"
+    );
+    passedCount++;
+
+    // TEST E/F: Client-provided businessId and cashier identity cannot override session
+    const sessionActorContext: TenantContext = {
+      userId: "usr_session_cashier",
+      businessId: "biz_session_real",
+      branchIds: ["br_session"],
+      branchAccess: "SELECTED_BRANCHES",
+      role: "CASHIER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+    };
+    const actor = resolveSaleActor(
+      sessionActorContext,
+      { userId: "usr_session_cashier", name: "Session Cashier" },
+      {
+        businessId: "biz_attacker_override",
+        cashierUserId: "usr_attacker",
+        cashierName: "Attacker Name",
+      }
+    );
+    assert(
+      actor.businessId === "biz_session_real" && String(actor.businessId) !== "biz_attacker_override",
+      "Test E: Client-provided businessId cannot override session businessId"
+    );
+    assert(
+      actor.cashierUserId === "usr_session_cashier" &&
+        actor.cashierName === "Session Cashier" &&
+        String(actor.cashierUserId) !== "usr_attacker",
+      "Test F: Client-provided cashierUserId/cashierName cannot override authenticated user"
+    );
+    passedCount += 2;
+
+    // TEST J: Sale GET/list respects SALE_VIEW
+    const stockManagerNoSales: TenantContext = {
+      userId: "usr_stock_no_sales",
+      businessId: "biz_session_real",
+      branchIds: [],
+      branchAccess: "ALL_BRANCHES",
+      role: "STOCK_MANAGER",
+      permissions: DEFAULT_ROLE_PERMISSIONS.STOCK_MANAGER,
+    };
+    let saleViewDenied = false;
+    try {
+      await listSales(stockManagerNoSales, {});
+    } catch (e) {
+      saleViewDenied = e instanceof AuthorizationError;
+    }
+    assert(
+      saleViewDenied === true,
+      "Test J: Sale GET respects SALE_VIEW (STOCK_MANAGER without SALE_VIEW is denied)"
+    );
+    passedCount++;
+
+    if (isConnected) {
+      const bizModzone = await Business.findOne({ slug: "chama-modzone" });
+      const bizPhone = await Business.findOne({ slug: "abc-phone-shop" });
+      const branchColombo = await Branch.findOne({
+        businessId: bizModzone?._id.toString(),
+        code: "CMB-01",
+      });
+      const branchKandy = await Branch.findOne({
+        businessId: bizModzone?._id.toString(),
+        code: "KDY-01",
+      });
+      const branchPhone = await Branch.findOne({
+        businessId: bizPhone?._id.toString(),
+        code: "NGB-01",
+      });
+      const cashierColombo = await User.findOne({ email: "cashier.colombo@chamamodzone.com" });
+      const cashierAlias = await User.findOne({ email: "cashier@chamamodzone.com" });
+      const cashierKandy = await User.findOne({ email: "cashier.kandy@chamamodzone.com" });
+      const phoneOwner = await User.findOne({ email: "owner@abcphones.lk" });
+      const speaker = await Product.findOne({
+        businessId: bizModzone?._id.toString(),
+        sku: "CMZ-SPK-01",
+      });
+      const phoneCase = await Product.findOne({
+        businessId: bizPhone?._id.toString(),
+        sku: "ABC-CAS-01",
+      });
+
+      assert(
+        Boolean(
+          bizModzone &&
+            bizPhone &&
+            branchColombo &&
+            branchKandy &&
+            branchPhone &&
+            cashierColombo &&
+            cashierAlias &&
+            cashierKandy &&
+            phoneOwner &&
+            speaker &&
+            phoneCase
+        ),
+        "Test 2B-1A pre-condition: seeded businesses, branches, cashiers, and products exist"
+      );
+      passedCount++;
+
+      const colomboCashierCtx: TenantContext = {
+        userId: cashierColombo!._id.toString(),
+        businessId: bizModzone!._id.toString(),
+        branchAccess: "SELECTED_BRANCHES",
+        branchIds: [branchColombo!._id.toString()],
+        role: "CASHIER",
+        permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      };
+      const aliasCashierCtx: TenantContext = {
+        userId: cashierAlias!._id.toString(),
+        businessId: bizModzone!._id.toString(),
+        branchAccess: "SELECTED_BRANCHES",
+        branchIds: [branchColombo!._id.toString()],
+        role: "CASHIER",
+        permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      };
+      const kandyCashierCtx: TenantContext = {
+        userId: cashierKandy!._id.toString(),
+        businessId: bizModzone!._id.toString(),
+        branchAccess: "SELECTED_BRANCHES",
+        branchIds: [branchKandy!._id.toString()],
+        role: "CASHIER",
+        permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+      };
+      const phoneOwnerCtx: TenantContext = {
+        userId: phoneOwner!._id.toString(),
+        businessId: bizPhone!._id.toString(),
+        branchAccess: "ALL_BRANCHES",
+        branchIds: [branchPhone!._id.toString()],
+        role: "BUSINESS_OWNER",
+        permissions: DEFAULT_ROLE_PERMISSIONS.BUSINESS_OWNER,
+      };
+
+      const clientUnitPrice = 1;
+      const expectedUnitPrice = Number(speaker!.sellingPrice || speaker!.price);
+      const qty = 2;
+      const expectedSubtotal = Math.round(expectedUnitPrice * qty * 100) / 100;
+
+      const createdSale = await createSale(
+        colomboCashierCtx,
+        { userId: cashierColombo!._id.toString(), name: cashierColombo!.name },
+        {
+          businessId: bizPhone!._id.toString(),
+          cashierUserId: "usr_spoofed_cashier",
+          cashierName: "Spoofed Cashier",
+          branchId: branchColombo!._id.toString(),
+          items: [
+            {
+              productId: speaker!._id.toString(),
+              quantity: qty,
+              unitPrice: clientUnitPrice,
+              price: clientUnitPrice,
+              name: "Tampered Name",
+              sku: "TAMPERED-SKU",
+            },
+          ],
+          paymentMethod: "cash",
+          paidAmount: expectedSubtotal,
+          grandTotal: 0,
+          subtotal: 0,
+        }
+      );
+
+      assert(
+        createdSale.businessId === bizModzone!._id.toString() &&
+          createdSale.businessId !== bizPhone!._id.toString(),
+        "Test B: Cashier cannot create a sale for another business (session businessId wins)"
+      );
+      assert(
+        createdSale.cashierUserId === cashierColombo!._id.toString() &&
+          createdSale.cashierName === cashierColombo!.name,
+        "Test F-db: Persisted cashier identity matches authenticated user, not client payload"
+      );
+      assert(
+        createdSale.items[0].unitPrice === expectedUnitPrice &&
+          createdSale.items[0].unitPrice !== clientUnitPrice &&
+          createdSale.items[0].name === speaker!.name &&
+          createdSale.items[0].sku === speaker!.sku,
+        "Test G: Client-provided product price/name/SKU cannot override database product snapshot"
+      );
+      assert(
+        createdSale.subtotal === expectedSubtotal &&
+          createdSale.grandTotal === expectedSubtotal &&
+          createdSale.discountTotal === 0,
+        "Test H: Sale totals are calculated server-side from database prices and quantities"
+      );
+      passedCount += 4;
+
+      const audit = await findSaleCreatedAudit(createdSale._id.toString());
+      assert(
+        Boolean(audit) &&
+          audit?.action === "SALE_CREATED" &&
+          audit?.entityId === createdSale._id.toString() &&
+          audit?.businessId === bizModzone!._id.toString() &&
+          audit?.branchId === branchColombo!._id.toString(),
+        "Test I: SALE_CREATED audit event is generated for the sale"
+      );
+      passedCount++;
+
+      let otherBranchDenied = false;
+      try {
+        await createSale(
+          colomboCashierCtx,
+          { userId: cashierColombo!._id.toString(), name: cashierColombo!.name },
+          {
+            branchId: branchKandy!._id.toString(),
+            items: [{ productId: speaker!._id.toString(), quantity: 1 }],
+            paymentMethod: "cash",
+            paidAmount: expectedUnitPrice,
+          }
+        );
+      } catch (e) {
+        otherBranchDenied = e instanceof AuthorizationError;
+      }
+      assert(
+        otherBranchDenied === true,
+        "Test C: Cashier cannot create a sale for a branch they cannot access"
+      );
+      passedCount++;
+
+      let allBranchCreateDenied = false;
+      try {
+        await createSale(
+          colomboCashierCtx,
+          { userId: cashierColombo!._id.toString(), name: cashierColombo!.name },
+          {
+            branchId: "ALL_BRANCHES",
+            items: [{ productId: speaker!._id.toString(), quantity: 1 }],
+            paymentMethod: "cash",
+            paidAmount: expectedUnitPrice,
+          }
+        );
+      } catch (e) {
+        allBranchCreateDenied = e instanceof SaleValidationError;
+      }
+      assert(
+        allBranchCreateDenied === true,
+        "Test D-db: Creating a sale with ALL_BRANCHES as branchId is rejected"
+      );
+      passedCount++;
+
+      let crossTenantGetDenied = false;
+      try {
+        await getSaleById(phoneOwnerCtx, createdSale._id.toString());
+      } catch (e) {
+        crossTenantGetDenied =
+          e instanceof SaleValidationError && (e as SaleValidationError).statusCode === 404;
+      }
+      const phoneList = await listSales(phoneOwnerCtx, {});
+      const leaked = phoneList.sales.some((s) => s._id.toString() === createdSale._id.toString());
+      assert(
+        crossTenantGetDenied === true && leaked === false,
+        "Test A: Sale from Business A cannot be accessed by Business B"
+      );
+      passedCount++;
+
+      const otherCashierList = await listSales(aliasCashierCtx, {});
+      const sawOtherCashier = otherCashierList.sales.some(
+        (s) => s._id.toString() === createdSale._id.toString()
+      );
+      assert(
+        sawOtherCashier === false,
+        "Test K: Cashier without SALE_VIEW_OTHER_CASHIERS cannot see another cashier's sales"
+      );
+      passedCount++;
+
+      let foreignProductDenied = false;
+      try {
+        await createSale(
+          kandyCashierCtx,
+          { userId: cashierKandy!._id.toString(), name: cashierKandy!.name },
+          {
+            branchId: branchKandy!._id.toString(),
+            items: [{ productId: phoneCase!._id.toString(), quantity: 1 }],
+            paymentMethod: "cash",
+            paidAmount: 15,
+          }
+        );
+      } catch (e) {
+        foreignProductDenied = e instanceof SaleValidationError;
+      }
+      assert(
+        foreignProductDenied === true,
+        "Test B-product: Cashier cannot attach another business's product to a sale"
+      );
+      passedCount++;
+    }
+
     console.log("\n============================================================");
     console.log(` ALL ${passedCount} ACCESS CONTROL & TENANT ISOLATION TESTS PASSED!`);
-    console.log(" (Phase 2A + Phase 2B Product + Phase 2B-0 User/Branch/Role/Perm/Audit)");
+    console.log(" (Phase 2A + Phase 2B Product + Phase 2B-0 + Phase 2B-1A POS Sales)");
     console.log("============================================================\n");
 
     if (isConnected) {
@@ -565,3 +882,4 @@ async function runIsolationTests() {
 }
 
 runIsolationTests();
+

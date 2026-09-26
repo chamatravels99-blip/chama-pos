@@ -7,6 +7,7 @@ import { Branch } from "../models/Branch";
 import { User } from "../models/User";
 import { Product } from "../models/Product";
 import { AuditLog } from "../models/AuditLog";
+import { Sale } from "../models/Sale";
 import { hashPassword } from "../lib/auth/password";
 import { DEFAULT_ROLE_PERMISSIONS } from "../types";
 
@@ -59,6 +60,7 @@ async function seed() {
       User.deleteMany({}),
       Product.deleteMany({}),
       AuditLog.deleteMany({}),
+      Sale.deleteMany({}),
     ]);
     console.log("Cleaned.\n");
 

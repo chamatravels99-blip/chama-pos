@@ -13,6 +13,7 @@ export interface SaleItem {
   variantId?: string;
   name: string;
   sku: string;
+  barcode?: string;
   unitPrice: number;
   costPrice: number;
   quantity: number;
