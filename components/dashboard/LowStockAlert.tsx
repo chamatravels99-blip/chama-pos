@@ -1,18 +1,48 @@
 import React from "react";
-import { mockLowStockProducts } from "@/services/mock-data";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 
-export function LowStockAlert() {
+export interface LowStockAlertItem {
+  productId: string;
+  productName: string;
+  sku: string;
+  currentStock: number;
+  lowStockThreshold: number;
+  branchName: string;
+}
+
+export function LowStockAlert({ items }: { items?: LowStockAlertItem[] }) {
+  const alertItems = items || [];
+
+  if (alertItems.length === 0) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center text-xs text-slate-600">
+          No low-stock items
+        </div>
+
+        <div className="pt-2 text-center">
+          <Link
+            href="/inventory"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700"
+          >
+            View all inventory stock alerts
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {mockLowStockProducts.map((item) => {
+      {alertItems.map((item) => {
         const isOutOfStock = item.currentStock === 0;
 
         return (
           <div
-            key={item.productId}
+            key={`${item.productId}-${item.branchName}`}
             className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
           >
             <div className="flex items-start gap-3">

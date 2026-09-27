@@ -30,6 +30,7 @@ import {
   SaleValidationError,
   findSaleCreatedAudit,
 } from "../lib/sales/sale-service";
+import { adjustStock } from "../lib/inventory/stock-service";
 
 // Load .env.local manually if running in standalone script
 function loadEnv() {
@@ -657,19 +658,48 @@ async function runIsolationTests() {
         sku: "ABC-CAS-01",
       });
 
+      if (!(
+        bizModzone &&
+        bizPhone &&
+        branchColombo &&
+        branchKandy &&
+        branchPhone &&
+        cashierColombo &&
+        cashierAlias &&
+        cashierKandy &&
+        phoneOwner &&
+        speaker &&
+        phoneCase
+      )) {
+        const { execSync } = await import("child_process");
+        execSync("npx tsx scripts/seed.ts", { stdio: "inherit" });
+      }
+
+      const seededBizModzone = await Business.findOne({ slug: "chama-modzone" });
+      const seededBizPhone = await Business.findOne({ slug: "abc-phone-shop" });
+      const seededBranchColombo = await Branch.findOne({ businessId: seededBizModzone?._id.toString(), code: "CMB-01" });
+      const seededBranchKandy = await Branch.findOne({ businessId: seededBizModzone?._id.toString(), code: "KDY-01" });
+      const seededBranchPhone = await Branch.findOne({ businessId: seededBizPhone?._id.toString(), code: "NGB-01" });
+      const seededCashierColombo = await User.findOne({ email: "cashier.colombo@chamamodzone.com" });
+      const seededCashierAlias = await User.findOne({ email: "cashier@chamamodzone.com" });
+      const seededCashierKandy = await User.findOne({ email: "cashier.kandy@chamamodzone.com" });
+      const seededPhoneOwner = await User.findOne({ email: "owner@abcphones.lk" });
+      const seededSpeaker = await Product.findOne({ businessId: seededBizModzone?._id.toString(), sku: "CMZ-SPK-01" });
+      const seededPhoneCase = await Product.findOne({ businessId: seededBizPhone?._id.toString(), sku: "ABC-CAS-01" });
+
       assert(
         Boolean(
-          bizModzone &&
-            bizPhone &&
-            branchColombo &&
-            branchKandy &&
-            branchPhone &&
-            cashierColombo &&
-            cashierAlias &&
-            cashierKandy &&
-            phoneOwner &&
-            speaker &&
-            phoneCase
+          seededBizModzone &&
+            seededBizPhone &&
+            seededBranchColombo &&
+            seededBranchKandy &&
+            seededBranchPhone &&
+            seededCashierColombo &&
+            seededCashierAlias &&
+            seededCashierKandy &&
+            seededPhoneOwner &&
+            seededSpeaker &&
+            seededPhoneCase
         ),
         "Test 2B-1A pre-condition: seeded businesses, branches, cashiers, and products exist"
       );
@@ -838,6 +868,118 @@ async function runIsolationTests() {
       assert(
         sawOtherCashier === false,
         "Test K: Cashier without SALE_VIEW_OTHER_CASHIERS cannot see another cashier's sales"
+      );
+      passedCount++;
+
+      const stockTargetProduct = await Product.findOne({
+        businessId: bizModzone!._id.toString(),
+        sku: "CMZ-SPK-01",
+      });
+      const stockTargetBranch = await Branch.findOne({
+        businessId: bizModzone!._id.toString(),
+        code: "CMB-01",
+      });
+
+      assert(Boolean(stockTargetProduct && stockTargetBranch), "Inventory precondition: test stock product and branch exist");
+      passedCount++;
+
+      const inventorySession = await mongoose.startSession();
+      try {
+        await inventorySession.withTransaction(async () => {
+          const beforeStock = (stockTargetProduct!.stockByBranch || []).find(
+            (item) => item.branchId === stockTargetBranch!._id.toString()
+          );
+          const startQuantity = Number(beforeStock?.quantity || 0);
+
+          await adjustStock(
+            {
+              businessId: bizModzone!._id.toString(),
+              branchId: stockTargetBranch!._id.toString(),
+              productId: stockTargetProduct!._id.toString(),
+              quantityChange: 10,
+              type: "purchase_received",
+              userId: cashierColombo!._id.toString(),
+              notes: "Supplier restock",
+            },
+            inventorySession
+          );
+
+          const refreshedProduct = await Product.findById(stockTargetProduct!._id).session(inventorySession);
+          const refreshedStock = (refreshedProduct!.stockByBranch || []).find(
+            (item) => item.branchId === stockTargetBranch!._id.toString()
+          );
+
+          assert(
+            Number(refreshedStock?.quantity || 0) === startQuantity + 10,
+            "Test Inventory 1: Receive stock increases correct branch stock"
+          );
+          assert(
+            Boolean(refreshedStock) && Number(refreshedStock!.quantity) >= 0,
+            "Test Inventory 2: Received stock stays non-negative"
+          );
+        });
+      } finally {
+        await inventorySession.endSession();
+      }
+      passedCount += 2;
+
+      let foreignInventoryDenied = false;
+      try {
+        const inventorySession2 = await mongoose.startSession();
+        try {
+          await inventorySession2.withTransaction(async () => {
+            await adjustStock(
+              {
+                businessId: bizModzone!._id.toString(),
+                branchId: branchPhone!._id.toString(),
+                productId: stockTargetProduct!._id.toString(),
+                quantityChange: 2,
+                type: "adjustment",
+                userId: phoneOwner!._id.toString(),
+                notes: "Cross-tenant branch attempt",
+              },
+              inventorySession2
+            );
+          });
+        } finally {
+          await inventorySession2.endSession();
+        }
+      } catch (error) {
+        foreignInventoryDenied = true;
+      }
+      assert(
+        foreignInventoryDenied === true,
+        "Test Inventory 3: Unauthorized branch cannot receive stock"
+      );
+      passedCount++;
+
+      let negativeStockRejected = false;
+      try {
+        const inventorySession3 = await mongoose.startSession();
+        try {
+          await inventorySession3.withTransaction(async () => {
+            await adjustStock(
+              {
+                businessId: bizModzone!._id.toString(),
+                branchId: stockTargetBranch!._id.toString(),
+                productId: stockTargetProduct!._id.toString(),
+                quantityChange: -999999,
+                type: "adjustment",
+                userId: cashierColombo!._id.toString(),
+                notes: "Negative test",
+              },
+              inventorySession3
+            );
+          });
+        } finally {
+          await inventorySession3.endSession();
+        }
+      } catch (error) {
+        negativeStockRejected = true;
+      }
+      assert(
+        negativeStockRejected === true,
+        "Test Inventory 4: Negative resulting stock is rejected"
       );
       passedCount++;
 

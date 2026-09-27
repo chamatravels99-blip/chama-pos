@@ -1,11 +1,12 @@
 import { randomBytes } from "crypto";
 import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/db/connection";
-import { Sale } from "@/models/Sale";
+import { Sale, SaleDocument } from "@/models/Sale";
 import { Product } from "@/models/Product";
 import { Branch } from "@/models/Branch";
 import { Business } from "@/models/Business";
 import { AuditLog } from "@/models/AuditLog";
+import { deductStock } from "@/lib/inventory/stock-service";
 import { logAuditEvent } from "@/lib/db/audit";
 import { scopeToTenant, scopeToBranch, assertTenantContext } from "@/lib/db/tenant-context";
 import {
@@ -319,38 +320,84 @@ export async function createSale(
       ? clientBody.notes.trim()
       : undefined;
 
-  let created = null;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    try {
-      created = await Sale.create({
-        businessId: actor.businessId,
-        branchId,
-        invoiceNumber: generateInvoiceNumber(),
-        cashierUserId: actor.cashierUserId,
-        cashierName: actor.cashierName,
-        customerId,
-        customerName,
-        items: itemsWithOrderDiscount,
-        subtotal: itemsSubtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
-        paidAmount,
-        changeAmount,
-        paymentMethod,
-        paymentStatus: "paid",
-        status: "completed",
-        notes,
-      });
-      break;
-    } catch (error) {
-      const code = (error as { code?: number }).code;
-      if (code === 11000 && attempt < 7) {
-        continue;
+    let created: SaleDocument | null = null;
+
+const mongoSession = await mongoose.startSession();
+
+try {
+  const transactionResult = await mongoSession.withTransaction(async () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        const invoiceNumber = generateInvoiceNumber();
+
+        const sales = await Sale.create(
+          [
+            {
+              businessId: actor.businessId,
+              branchId,
+              invoiceNumber,
+              cashierUserId: actor.cashierUserId,
+              cashierName: actor.cashierName,
+              customerId,
+              customerName,
+              items: itemsWithOrderDiscount,
+              subtotal: itemsSubtotal,
+              discountTotal,
+              taxTotal,
+              grandTotal,
+              paidAmount,
+              changeAmount,
+              paymentMethod,
+              paymentStatus: "paid",
+              status: "completed",
+              notes,
+            },
+          ],
+          { session: mongoSession }
+        );
+
+        created = sales[0];
+        break;
+      } catch (error) {
+        const code = (error as { code?: number }).code;
+
+        if (code === 11000 && attempt < 7) {
+          continue;
+        }
+
+        throw error;
       }
-      throw error;
     }
-  }
+
+    if (!created) {
+      throw new SaleValidationError(
+        "Failed to generate a unique invoice number. Please try again."
+      );
+    }
+
+    for (const item of itemsWithOrderDiscount) {
+      await deductStock(
+        {
+          businessId: actor.businessId,
+          branchId,
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+          referenceId: created._id.toString(),
+          userId: actor.cashierUserId,
+          notes: `Stock deducted for sale ${created.invoiceNumber}.`,
+        },
+        mongoSession
+      );
+    }
+
+    return created;
+  });
+
+  created = transactionResult;
+} finally {
+  await mongoSession.endSession();
+}
 
   if (!created) {
     throw new SaleValidationError("Failed to generate a unique invoice number. Please try again.");

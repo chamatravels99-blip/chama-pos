@@ -4,3 +4,4 @@ export * from "./User";
 export * from "./Product";
 export * from "./AuditLog";
 export * from "./Sale";
+export * from "./StockMovement";
