@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { LowStockAlert, LowStockAlertItem } from "@/components/dashboard/LowStockAlert";
+import { useBranch } from "@/components/context/BranchContext";
 
-interface BranchOption { _id: string; name: string; code: string; }
 interface InventoryRow {
   productId: string;
   variantId?: string | null;
@@ -61,11 +61,11 @@ function hasBranchStock(
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 export default function InventoryPage() {
-  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const { branches, selectedBranchId, setSelectedBranch, canSelectAllBranches } = useBranch();
+  const selectedBranch = selectedBranchId || "ALL";
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [movements, setMovements] = useState<MovementRow[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState<string>("ALL");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -87,32 +87,28 @@ export default function InventoryPage() {
     setIsLoading(true);
     setError("");
     try {
-      const [branchesRes, productsRes, inventoryRes, movementsRes] = await Promise.all([
-        fetch("/api/branches", { cache: "no-store" }),
+      const [productsRes, inventoryRes, movementsRes] = await Promise.all([
         fetch("/api/products?limit=500", { cache: "no-store" }),
         fetch(`/api/inventory${selectedBranch !== "ALL" ? `?branchId=${selectedBranch}` : ""}`, { cache: "no-store" }),
         fetch(`/api/inventory/movements${selectedBranch !== "ALL" ? `?branchId=${selectedBranch}` : ""}`, { cache: "no-store" }),
       ]);
 
-      if (!branchesRes.ok || !productsRes.ok || !inventoryRes.ok || !movementsRes.ok) {
-        const [branchesData, productsData, inventoryData, movementsData] = await Promise.all([
-          branchesRes.json().catch(() => ({})),
+      if (!productsRes.ok || !inventoryRes.ok || !movementsRes.ok) {
+        const [productsData, inventoryData, movementsData] = await Promise.all([
           productsRes.json().catch(() => ({})),
           inventoryRes.json().catch(() => ({})),
           movementsRes.json().catch(() => ({})),
         ]);
-        const message = inventoryData.error || productsData.error || branchesData.error || movementsData.error || "Failed to load inventory.";
+        const message = inventoryData.error || productsData.error || movementsData.error || "Failed to load inventory.";
         throw new Error(message);
       }
 
-      const [branchesData, productsData, inventoryData, movementsData] = await Promise.all([
-        branchesRes.json(),
+      const [productsData, inventoryData, movementsData] = await Promise.all([
         productsRes.json(),
         inventoryRes.json(),
         movementsRes.json(),
       ]);
 
-      setBranches(branchesData.branches || []);
       setProducts(productsData.products || []);
       setRows(inventoryData.rows || []);
       setMovements(movementsData.movements || []);
@@ -141,11 +137,13 @@ export default function InventoryPage() {
   }, [toast]);
 
   const branchOptions = useMemo(() => {
-    if (selectedBranch !== "ALL") {
-      return branches;
-    }
+    if (!canSelectAllBranches) return branches;
     return [{ _id: "ALL", name: "All Branches", code: "ALL" }, ...branches];
-  }, [branches, selectedBranch]);
+  }, [branches, canSelectAllBranches]);
+
+  const editableBranches = selectedBranch === "ALL"
+    ? branches
+    : branches.filter((branch) => branch._id === selectedBranch);
 
   const lowStockItems = useMemo<LowStockAlertItem[]>(() => { 
     return rows
@@ -185,7 +183,7 @@ export default function InventoryPage() {
   useEffect(() => {
     if (!showReceiveModal && !showAdjustModal) {
       setForm({
-        branchId: branches[0]?._id || "",
+        branchId: selectedBranch !== "ALL" ? selectedBranch : editableBranches[0]?._id || "",
         productId: "",
         variantId: "",
         quantity: "",
@@ -193,7 +191,7 @@ export default function InventoryPage() {
         type: "purchase_received",
       });
     }
-  }, [showReceiveModal, showAdjustModal, branches]);
+  }, [showReceiveModal, showAdjustModal, editableBranches, selectedBranch]);
 
   async function submitInventoryAdjustment(mode: "receive" | "adjust") {
     if (!form.branchId || !form.productId || !form.quantity) {
@@ -252,19 +250,18 @@ export default function InventoryPage() {
 
       <PageHeader title="Inventory & Stock Management" description="Track stock, inventory health, and movement history by branch.">
         <div className="flex items-center gap-2">
-          <select value={selectedBranch} onChange={(e) => setSelectedBranch(e.target.value)} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700">
-            <option value="ALL">All Branches</option>
-            {branches.map((branch) => (
+          <select value={selectedBranch} onChange={(e) => { void setSelectedBranch(e.target.value); }} className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700">
+            {branchOptions.map((branch) => (
               <option key={branch._id} value={branch._id}>{branch.name}</option>
             ))}
           </select>
           {canAdjust && (
-              <Button variant="outline" size="sm" onClick={() => { setShowAdjustModal(true); setForm((prev) => ({ ...prev, type: "increase", branchId: prev.branchId || branches[0]?._id || "" })); }}>
+              <Button variant="outline" size="sm" onClick={() => { setShowAdjustModal(true); setForm((prev) => ({ ...prev, type: "increase", branchId: selectedBranch !== "ALL" ? selectedBranch : prev.branchId || branches[0]?._id || "" })); }}>
               <Plus className="h-3.5 w-3.5 mr-1.5" />
               Adjust Stock
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={() => { setShowReceiveModal(true); setForm((prev) => ({ ...prev, branchId: prev.branchId || branches[0]?._id || "" })); }}>
+          <Button variant="primary" size="sm" onClick={() => { setShowReceiveModal(true); setForm((prev) => ({ ...prev, branchId: selectedBranch !== "ALL" ? selectedBranch : prev.branchId || branches[0]?._id || "" })); }}>
             <ArrowDownToLine className="h-3.5 w-3.5 mr-1.5" />
             Receive Stock
           </Button>
@@ -418,7 +415,7 @@ export default function InventoryPage() {
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Branch</label>
                 <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value, productId: "", variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                  {branches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
+                  {editableBranches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
                 </select>
               </div>
               <div>
@@ -468,7 +465,7 @@ export default function InventoryPage() {
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Branch</label>
                 <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value, productId: "", variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                  {branches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
+                  {editableBranches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
                 </select>
               </div>
               <div>

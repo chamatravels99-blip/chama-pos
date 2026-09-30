@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { assertBranchAccess } from "@/lib/auth/session";
+import { assertBranchAccess, isPlatformRole } from "@/lib/auth/session";
 import { scopeToTenant } from "@/lib/db/tenant-context";
 import { Branch } from "@/models/Branch";
 import { Product } from "@/models/Product";
@@ -117,4 +117,36 @@ export async function createProductWithOpeningStock(
   } finally {
     await session.endSession();
   }
+}
+
+interface ProductStockView {
+  stockByBranch?: { branchId: string; [key: string]: unknown }[];
+  variants?: { stockByBranch?: { branchId: string; [key: string]: unknown }[] }[];
+}
+
+export function scopeProductStock<T extends ProductStockView>(
+  product: T,
+  tenantContext: TenantContext,
+  selectedBranchId?: string
+): T {
+  const canAccessAllBranches =
+    isPlatformRole(tenantContext.role) ||
+    tenantContext.role === "BUSINESS_OWNER" ||
+    tenantContext.branchAccess === "ALL_BRANCHES";
+  const allowedBranchIds = selectedBranchId
+    ? new Set([selectedBranchId])
+    : canAccessAllBranches
+      ? null
+      : new Set(tenantContext.branchIds || []);
+  const scopeStock = (rows?: { branchId: string; [key: string]: unknown }[]) =>
+    rows?.filter((row) => !allowedBranchIds || allowedBranchIds.has(row.branchId));
+
+  return {
+    ...product,
+    stockByBranch: scopeStock(product.stockByBranch),
+    variants: product.variants?.map((variant) => ({
+      ...variant,
+      stockByBranch: scopeStock(variant.stockByBranch),
+    })),
+  };
 }

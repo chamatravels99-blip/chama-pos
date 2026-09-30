@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useBranch } from "@/components/context/BranchContext";
-import { RefreshCw } from "lucide-react";
+import { Printer, RefreshCw } from "lucide-react";
 
 interface HistorySale {
   _id: string;
@@ -56,6 +56,10 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
     return branches.find((b) => b._id === branchId)?.name || branchId;
   }
 
+  function openPrint(saleId: string, format: "80mm" | "A4") {
+    window.open(`/print/sales/${encodeURIComponent(saleId)}?format=${format}`, "_blank", "noopener,noreferrer");
+  }
+
   return (
     <Card noPadding className="overflow-hidden">
       <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100">
@@ -82,18 +86,19 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
               <th className="py-3 px-4 text-right">Amount</th>
               <th className="py-3 px-4 hidden sm:table-cell">Time</th>
               <th className="py-3 px-4 text-center">Status</th>
+              <th className="py-3 px-4 text-right">Print</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
               <tr>
-                <td className="py-6 px-4 text-slate-400" colSpan={7}>
+                <td className="py-6 px-4 text-slate-400" colSpan={8}>
                   Loading sales…
                 </td>
               </tr>
             ) : sales.length === 0 ? (
               <tr>
-                <td className="py-6 px-4 text-slate-400" colSpan={7}>
+                <td className="py-6 px-4 text-slate-400" colSpan={8}>
                   No sales recorded yet.
                 </td>
               </tr>
@@ -120,6 +125,18 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
                       <Badge variant={sale.status === "completed" ? "success" : "secondary"} size="sm">
                         {sale.status}
                       </Badge>
+                    </td>
+                    <td className="py-3 px-4">
+                      {sale.status === "completed" && (
+                        <div className="flex justify-end gap-1.5">
+                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => openPrint(sale._id, "80mm")} aria-label={`Print ${sale.invoiceNumber} as 80mm receipt`}>
+                            <Printer className="mr-1 h-3 w-3" /> 80mm
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => openPrint(sale._id, "A4")} aria-label={`Print ${sale.invoiceNumber} as A4 invoice`}>
+                            A4
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

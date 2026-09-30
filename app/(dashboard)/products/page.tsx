@@ -12,10 +12,12 @@ import { Badge } from "@/components/ui/Badge";
 import { ProductFilters, ProductFiltersState } from "@/components/products/ProductFilters";
 import { ProductTableRow, ProductRow } from "@/components/products/ProductTableRow";
 import { ProductForm } from "@/components/products/ProductForm";
+import { useBranch } from "@/components/context/BranchContext";
 
 const PAGE_SIZE = 20;
 
 export default function ProductsPage() {
+  const { selectedBranchId } = useBranch();
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -45,7 +47,9 @@ export default function ProductsPage() {
     setIsLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/products?limit=500", { cache: "no-store" });
+      const params = new URLSearchParams({ limit: "500" });
+      if (selectedBranchId) params.set("branchId", selectedBranchId);
+      const res = await fetch(`/api/products?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to load products.");
@@ -57,7 +61,7 @@ export default function ProductsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   useEffect(() => {
     fetchProducts();

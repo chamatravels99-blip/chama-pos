@@ -3,34 +3,30 @@ import { connectToDatabase } from "@/lib/db/connection";
 import { Product } from "@/models/Product";
 import { Branch } from "@/models/Branch";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
-  isPlatformRole,
+  resolveRequestedBranch,
 } from "@/lib/auth/session";
-import { scopeToTenant, scopeToBranch } from "@/lib/db/tenant-context";
+import { scopeToTenant } from "@/lib/db/tenant-context";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("STOCK_VIEW");
     await connectToDatabase();
 
     const { searchParams } = request.nextUrl;
-    const selectedBranch = searchParams.get("branchId") || undefined;
+    assertEffectiveBusinessId(tenantContext, searchParams.get("businessId"));
+    const selectedBranch = resolveRequestedBranch(tenantContext, searchParams.get("branchId") || undefined);
     const search = searchParams.get("search")?.trim() || "";
     const lowOnly = searchParams.get("lowOnly") === "true";
 
-    const branchQuery = selectedBranch && selectedBranch !== "ALL"
-      ? scopeToBranch(tenantContext, selectedBranch)
-      : scopeToBranch(tenantContext, undefined, {});
-
-    const businessQuery = isPlatformRole(tenantContext.role)
-      ? (searchParams.get("businessId") ? { businessId: searchParams.get("businessId") } : {})
-      : scopeToTenant(tenantContext, {});
+    const businessQuery = scopeToTenant(tenantContext, {});
 
     const productQuery = {
       ...businessQuery,
@@ -63,7 +59,7 @@ export async function GET(request: NextRequest) {
         if (selectedBranch && selectedBranch !== "ALL") {
           return entry.branchId === selectedBranch;
         }
-        if (!isPlatformRole(tenantContext.role) && !tenantContext.branchIds?.length) {
+        if (tenantContext.branchAccess !== "ALL_BRANCHES" && tenantContext.role !== "BUSINESS_OWNER" && !tenantContext.branchIds?.length) {
           return false;
         }
         if (tenantContext.role === "BUSINESS_OWNER" || tenantContext.branchAccess === "ALL_BRANCHES") {
@@ -105,7 +101,7 @@ export async function GET(request: NextRequest) {
             if (selectedBranch && selectedBranch !== "ALL") {
               return entry.branchId === selectedBranch;
             }
-            if (tenantContext.role === "BUSINESS_OWNER" || tenantContext.branchAccess === "ALL_BRANCHES") {
+            if (tenantContext.role === "BUSINESS_OWNER" || tenantContext.branchAccess === "ALL_BRANCHES" || tenantContext.role === "PLATFORM_ADMIN" || tenantContext.role === "PLATFORM_OWNER" || tenantContext.role === "SUPER_ADMIN") {
               return true;
             }
             return (tenantContext.branchIds || []).includes(entry.branchId);

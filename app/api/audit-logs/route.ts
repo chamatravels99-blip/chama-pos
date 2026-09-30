@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import { AuditLog } from "@/models/AuditLog";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
@@ -18,25 +19,12 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
+    assertEffectiveBusinessId(tenantContext, request.nextUrl.searchParams.get("businessId"));
     await requirePermission("AUDIT_LOG_VIEW");
     await connectToDatabase();
 
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    let query: Record<string, unknown> = {};
-
-    if (isPlatformAdmin) {
-      const targetBusinessId = request.nextUrl.searchParams.get("businessId");
-      if (targetBusinessId) {
-        query.businessId = targetBusinessId;
-      }
-    } else {
-      query = scopeToTenant(tenantContext, query);
-    }
+    const query: Record<string, unknown> = scopeToTenant(tenantContext, {});
 
     const action = request.nextUrl.searchParams.get("action");
     if (action) {

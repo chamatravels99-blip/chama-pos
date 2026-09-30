@@ -3,7 +3,7 @@ import { connectToDatabase } from "@/lib/db/connection";
 import { User } from "@/models/User";
 import { Branch } from "@/models/Branch";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
@@ -22,25 +22,16 @@ type RouteContext = { params: { id: string } };
  */
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("USER_VIEW");
     await connectToDatabase();
 
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    const user = await User.findById(params.id).select("-passwordHash").lean();
+    const user = await User.findOne({ _id: params.id, businessId: tenantContext.businessId }).select("-passwordHash").lean();
     if (!user) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     // Tenant isolation verification
-    if (!isPlatformAdmin && user.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
-
     return NextResponse.json({ success: true, user });
   } catch (error) {
     if (error instanceof AuthenticationError) {
@@ -62,25 +53,16 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
  */
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("USER_EDIT");
     await connectToDatabase();
 
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    const targetUser = await User.findById(params.id);
+    const targetUser = await User.findOne({ _id: params.id, businessId: tenantContext.businessId });
     if (!targetUser) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     // Tenant isolation check
-    if (!isPlatformAdmin && targetUser.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
-
     const body = await request.json();
 
     // Verify email uniqueness if changed
@@ -195,25 +177,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
  */
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("USER_DISABLE");
     await connectToDatabase();
 
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    const targetUser = await User.findById(params.id);
+    const targetUser = await User.findOne({ _id: params.id, businessId: tenantContext.businessId });
     if (!targetUser) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     // Tenant isolation check
-    if (!isPlatformAdmin && targetUser.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
-
     // Prevent deactivating own account
     if (targetUser._id.toString() === tenantContext.userId) {
       return NextResponse.json(

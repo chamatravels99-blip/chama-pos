@@ -20,6 +20,7 @@ export interface BusinessSettings {
   enableTaxes: boolean;
   receiptHeader?: string;
   receiptFooter?: string;
+  defaultPrintFormat?: "80mm" | "A4";
   lowStockThresholdDefault: number;
 }
 

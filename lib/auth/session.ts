@@ -1,5 +1,10 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import mongoose from "mongoose";
+import { Business } from "@/models/Business";
+import { Branch } from "@/models/Branch";
+import { connectToDatabase } from "@/lib/db/connection";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/session-constants";
 import {
   SessionPayload,
   TenantContext,
@@ -8,7 +13,9 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
 } from "@/types";
 
-export const SESSION_COOKIE_NAME = "chama_session";
+export { SESSION_COOKIE_NAME } from "@/lib/auth/session-constants";
+export const SELECTED_BUSINESS_COOKIE_NAME = "chama_selected_business";
+export const ACTIVE_BRANCH_COOKIE_NAME = "chama_active_branch";
 const SESSION_EXPIRATION_TIME = "7d";
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
@@ -79,6 +86,8 @@ export async function createSession(payload: SessionPayload): Promise<string> {
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
+  cookieStore.delete(SELECTED_BUSINESS_COOKIE_NAME);
+  cookieStore.delete(ACTIVE_BRANCH_COOKIE_NAME);
 
   return token;
 }
@@ -103,6 +112,8 @@ export async function getSession(): Promise<SessionPayload | null> {
 export async function destroySession(): Promise<void> {
   const cookieStore = cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
+  cookieStore.delete(SELECTED_BUSINESS_COOKIE_NAME);
+  cookieStore.delete(ACTIVE_BRANCH_COOKIE_NAME);
 }
 
 /**
@@ -243,12 +254,218 @@ export async function getTenantContext(): Promise<TenantContext> {
 }
 
 /**
+ * Resolves the tenant selected by a platform user without changing the platform session.
+ * Selection cookies are only hints: the user role, active business, and branch access
+ * are revalidated against the database before they enter an effective tenant context.
+ */
+export async function getEffectiveTenantContext(): Promise<TenantContext> {
+  const context = await getTenantContext();
+  const cookieStore = cookies();
+  const isPlatform = isPlatformRole(context.role);
+  const requestedBusinessId = cookieStore.get(SELECTED_BUSINESS_COOKIE_NAME)?.value;
+
+  if (isPlatform) {
+    if (!requestedBusinessId || !mongoose.isValidObjectId(requestedBusinessId)) {
+      return { ...context, businessId: null, activeBranchId: undefined };
+    }
+
+    await connectToDatabase();
+    const business = await Business.findOne({
+      _id: requestedBusinessId,
+      status: "active",
+      isActive: { $ne: false },
+    }).select("_id name slug").lean();
+
+    if (!business) {
+      return { ...context, businessId: null, activeBranchId: undefined };
+    }
+
+    context.businessId = business._id.toString();
+    context.businessName = business.name;
+    context.businessSlug = business.slug;
+    context.branchAccess = "ALL_BRANCHES";
+  }
+
+  if (!context.businessId) {
+    return { ...context, activeBranchId: undefined };
+  }
+
+  const canSelectAll =
+    isPlatform || context.role === "BUSINESS_OWNER" || context.branchAccess === "ALL_BRANCHES";
+  const requestedBranchId = cookieStore.get(ACTIVE_BRANCH_COOKIE_NAME)?.value;
+  const defaultBranchId = canSelectAll
+    ? "ALL"
+    : context.activeBranchId || context.branchIds[0];
+  const candidateBranchId = requestedBranchId || defaultBranchId;
+
+  if (!candidateBranchId) {
+    return { ...context, activeBranchId: undefined };
+  }
+  if (candidateBranchId === "ALL") {
+    return { ...context, activeBranchId: resolveActiveBranchId(context, candidateBranchId, true) };
+  }
+  if (!mongoose.isValidObjectId(candidateBranchId) || !isBranchAllowed(context, candidateBranchId)) {
+    return { ...context, activeBranchId: resolveActiveBranchId(context, candidateBranchId, false) };
+  }
+
+  await connectToDatabase();
+  const branch = await Branch.findOne({
+    _id: candidateBranchId,
+    businessId: context.businessId,
+    status: "active",
+    isActive: { $ne: false },
+  }).select("_id").lean();
+
+  return {
+    ...context,
+    activeBranchId: resolveActiveBranchId(context, candidateBranchId, Boolean(branch)),
+  };
+}
+
+export function resolveActiveBranchId(
+  context: TenantContext,
+  candidateBranchId: string | undefined,
+  belongsToSelectedBusiness: boolean
+): string | undefined {
+  const canSelectAll =
+    isPlatformRole(context.role) || context.role === "BUSINESS_OWNER" || context.branchAccess === "ALL_BRANCHES";
+  const fallbackBranchId = canSelectAll ? "ALL" : context.activeBranchId || context.branchIds[0];
+
+  if (!candidateBranchId) return undefined;
+  if (candidateBranchId === "ALL") {
+    return isBranchAllowed(context, "ALL") ? "ALL" : context.branchIds[0];
+  }
+  if (!belongsToSelectedBusiness || !isBranchAllowed(context, candidateBranchId)) {
+    return fallbackBranchId;
+  }
+  return candidateBranchId;
+}
+
+export async function requireEffectiveTenantContext(): Promise<TenantContext & { businessId: string }> {
+  const context = await getEffectiveTenantContext();
+  if (!context.businessId) {
+    throw new AuthorizationError("Select an active business before accessing business data.");
+  }
+  return context as TenantContext & { businessId: string };
+}
+
+export function assertEffectiveBusinessId(
+  context: TenantContext,
+  requestedBusinessId?: string | null
+): asserts context is TenantContext & { businessId: string } {
+  if (!context.businessId) {
+    throw new AuthorizationError("Select an active business before accessing business data.");
+  }
+  if (requestedBusinessId && requestedBusinessId !== context.businessId) {
+    throw new AuthorizationError("Forbidden: Requested business differs from the active business context.");
+  }
+}
+
+export async function setSelectedBusinessContext(businessId: string): Promise<TenantContext> {
+  const context = await getTenantContext();
+  if (!isPlatformRole(context.role)) {
+    throw new AuthorizationError("Forbidden: Only platform users can select a business.");
+  }
+  if (!mongoose.isValidObjectId(businessId)) {
+    throw new AuthorizationError("Business not found or unavailable.");
+  }
+
+  await connectToDatabase();
+  const business = await Business.findOne({
+    _id: businessId,
+    status: "active",
+    isActive: { $ne: false },
+  }).select("_id name slug").lean();
+  if (!business) {
+    throw new AuthorizationError("Business not found or unavailable.");
+  }
+
+  const cookieStore = cookies();
+  cookieStore.set(SELECTED_BUSINESS_COOKIE_NAME, business._id.toString(), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+  cookieStore.set(ACTIVE_BRANCH_COOKIE_NAME, "ALL", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+
+  return {
+    ...context,
+    businessId: business._id.toString(),
+    businessName: business.name,
+    businessSlug: business.slug,
+    branchAccess: "ALL_BRANCHES",
+    activeBranchId: "ALL",
+  };
+}
+
+export async function setSelectedBranchContext(branchId: string): Promise<TenantContext> {
+  const context = await getEffectiveTenantContext();
+  if (!context.businessId) {
+    throw new AuthorizationError("Select a business before selecting a branch.");
+  }
+
+  if (branchId === "ALL") {
+    assertBranchAccess(context, "ALL");
+  } else {
+    if (!mongoose.isValidObjectId(branchId)) {
+      throw new AuthorizationError("Branch not found or access denied.");
+    }
+    assertBranchAccess(context, branchId);
+    await connectToDatabase();
+    const branch = await Branch.findOne({
+      _id: branchId,
+      businessId: context.businessId,
+      status: "active",
+      isActive: { $ne: false },
+    }).select("_id").lean();
+    if (!branch) {
+      throw new AuthorizationError("Branch not found or access denied.");
+    }
+  }
+
+  const cookieStore = cookies();
+  cookieStore.set(ACTIVE_BRANCH_COOKIE_NAME, branchId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+  return { ...context, activeBranchId: branchId };
+}
+
+export function resolveRequestedBranch(context: TenantContext, requestedBranchId?: string): string | undefined {
+  const requested = requestedBranchId?.trim();
+  const active = context.activeBranchId;
+
+  if (active && active !== "ALL") {
+    if (requested && requested !== "ALL" && requested !== active) {
+      throw new AuthorizationError("Forbidden: Requested branch differs from the active branch context.");
+    }
+    return active;
+  }
+
+  const branchId = requested && requested !== "ALL" ? requested : undefined;
+  if (branchId) assertBranchAccess(context, branchId);
+  return branchId;
+}
+
+/**
  * Server-side guard verifying access to a specific branch.
  * Throws an AuthorizationError if the user is unauthorized.
  */
 export async function requireBranchAccess(branchId?: string): Promise<TenantContext> {
-  const context = await getTenantContext();
-  assertBranchAccess(context, branchId);
+  const context = await getEffectiveTenantContext();
+  const effectiveBranchId = resolveRequestedBranch(context, branchId);
+  if (effectiveBranchId) assertBranchAccess(context, effectiveBranchId);
   return context;
 }
 

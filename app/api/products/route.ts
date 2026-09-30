@@ -2,15 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import { Product } from "@/models/Product";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
+  resolveRequestedBranch,
   requirePermission,
-  isPlatformRole,
   AuthorizationError,
   AuthenticationError,
 } from "@/lib/auth/session";
 import { scopeToTenant } from "@/lib/db/tenant-context";
 import { logAuditEvent } from "@/lib/db/audit";
-import { createProductWithOpeningStock, ProductCreationError } from "@/lib/products/product-service";
+import { createProductWithOpeningStock, ProductCreationError, scopeProductStock } from "@/lib/products/product-service";
 import { TenantSecurityError } from "@/lib/db/tenant-context";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +20,11 @@ export const dynamic = "force-dynamic";
  * GET /api/products
  * Returns all products scoped to the authenticated tenant.
  * Supports: ?search=, ?status=, ?category=, ?page=, ?limit=
- * PLATFORM_OWNER / PLATFORM_ADMIN may additionally pass ?businessId= to scope to a specific tenant.
+ * Platform users must first select a business in the server-side context.
  */
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await connectToDatabase();
 
     const { searchParams } = request.nextUrl;
@@ -33,20 +34,9 @@ export async function GET(request: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
 
-    const isPlatform = isPlatformRole(tenantContext.role);
-
-    // Build the base query with tenant isolation
-    let baseQuery: Record<string, unknown> = {};
-
-    if (isPlatform) {
-      const targetBusinessId = searchParams.get("businessId");
-      if (targetBusinessId) {
-        baseQuery.businessId = targetBusinessId;
-      }
-    } else {
-      // Strictly scope to the session's businessId — never trust the client
-      baseQuery = scopeToTenant(tenantContext, baseQuery);
-    }
+    assertEffectiveBusinessId(tenantContext, searchParams.get("businessId"));
+    const selectedBranchId = resolveRequestedBranch(tenantContext, searchParams.get("branchId") || undefined);
+    const baseQuery: Record<string, unknown> = scopeToTenant(tenantContext, {});
 
     // Apply optional filters
     if (statusFilter && ["active", "inactive"].includes(statusFilter)) {
@@ -73,7 +63,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      products,
+      products: products.map((product) => scopeProductStock(product, tenantContext, selectedBranchId)),
       pagination: {
         page,
         limit,
@@ -96,22 +86,29 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/products
  * Creates a new product strictly within the authenticated tenant.
- * businessId is ALWAYS taken from the session — never from the request body.
+ * businessId is ALWAYS taken from the effective server-side tenant context.
  * Requires PRODUCT_CREATE permission.
  */
 export async function POST(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("PRODUCT_CREATE");
 
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Invalid product data." }, { status: 400 });
     }
+    if (Object.prototype.hasOwnProperty.call(body, "businessId")) {
+      if (typeof body.businessId !== "string") {
+        return NextResponse.json({ error: "Invalid business context." }, { status: 400 });
+      }
+      assertEffectiveBusinessId(tenantContext, body.businessId);
+    }
 
     // --- Server-side validation ---
     const { name, sku, costPrice, sellingPrice, status, description, categoryName, brand, unit, barcode } = body;
-    const branchId = typeof body.branchId === "string" ? body.branchId.trim() : "";
+    const requestedBranchId = typeof body.branchId === "string" ? body.branchId.trim() : "";
+    const branchId = resolveRequestedBranch(tenantContext, requestedBranchId) || "";
     const openingQuantity = body.openingQuantity === undefined ? 0 : body.openingQuantity;
     const lowStockThreshold = body.lowStockThreshold === undefined ? 5 : body.lowStockThreshold;
 

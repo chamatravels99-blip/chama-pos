@@ -33,3 +33,170 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+.print-page {
+  min-height: 100vh;
+  background: #f1f5f9;
+  padding: 24px;
+  color: #111827;
+}
+
+.print-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 auto 16px;
+  max-width: 210mm;
+}
+
+.print-status {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+  color: #334155;
+}
+
+.pos-print-only {
+  display: none !important;
+}
+
+.thermal-paper {
+  box-sizing: border-box;
+  width: 72mm;
+  margin: 0 auto;
+  padding: 4mm;
+  background: #fff;
+  color: #111;
+  font-family: Arial, sans-serif;
+  font-size: 9pt;
+  line-height: 1.35;
+}
+
+.thermal-center { text-align: center; }
+.thermal-business-name { margin: 0 0 1mm; font-size: 14pt; font-weight: 700; }
+.thermal-paper p { margin: 0.5mm 0; overflow-wrap: anywhere; }
+.thermal-paper h2 { margin: 2mm 0 1mm; font-size: 10pt; }
+.thermal-branch-name { font-weight: 700; }
+.thermal-rule { margin: 3mm 0; border-top: 1px dashed #555; }
+.thermal-meta { margin: 2mm 0; padding: 2mm 0; border-top: 1px dashed #555; border-bottom: 1px dashed #555; }
+.thermal-meta div, .thermal-totals div, .thermal-item-detail { display: flex; justify-content: space-between; gap: 2mm; }
+.thermal-meta div { align-items: flex-start; }
+.thermal-meta span, .thermal-muted { color: #444; }
+.thermal-meta strong { max-width: 48mm; text-align: right; overflow-wrap: anywhere; }
+.thermal-items { border-bottom: 1px dashed #555; }
+.thermal-items h3 { margin: 0; padding: 2mm 0 1mm; font-size: 9pt; }
+.thermal-item { padding: 1.5mm 0; border-bottom: 1px dotted #888; }
+.thermal-item:last-child { border-bottom: 0; }
+.thermal-item-name, .thermal-muted { display: block; overflow-wrap: anywhere; }
+.thermal-item-detail { margin-top: 1mm; }
+.thermal-item-detail > span { min-width: 0; overflow-wrap: anywhere; }
+.thermal-item-detail > strong { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.thermal-totals { padding: 2mm 0; }
+.thermal-totals > div { margin: 1mm 0; }
+.thermal-grand-total { padding-top: 2mm; border-top: 1px dashed #555; font-size: 11pt; }
+.thermal-footer { margin-top: 3mm; padding-top: 2mm; border-top: 1px dashed #555; }
+.thermal-thank-you { margin-top: 2mm !important; font-weight: 700; }
+
+.invoice-barcode { display: flex; flex-direction: column; align-items: center; gap: 1mm; margin: 4mm auto 0; }
+.invoice-barcode-bars { display: flex; align-items: stretch; }
+.invoice-barcode-character { display: flex; gap: 0.16mm; }
+.invoice-barcode-bar, .invoice-barcode-space { display: block; height: 12mm; }
+.invoice-barcode-bar { background: #000; }
+.invoice-barcode-value { font-family: monospace; font-size: 8pt; }
+
+.invoice-paper {
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 277mm;
+  margin: 0 auto;
+  padding: 16mm;
+  background: #fff;
+  color: #17212b;
+  font-family: Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.45;
+  box-shadow: 0 8px 30px rgb(15 23 42 / 12%);
+}
+
+.invoice-header { display: flex; justify-content: space-between; gap: 12mm; padding-bottom: 7mm; border-bottom: 2px solid #1f4c45; }
+.invoice-company { min-width: 0; }
+.invoice-company h1 { margin: 2mm 0; font-size: 20pt; color: #173b36; }
+.invoice-company p, .invoice-parties p { margin: 1mm 0; color: #475569; }
+.invoice-company .invoice-branch-name { color: #17212b; font-weight: 700; }
+.invoice-logo { display: block; max-width: 48mm; max-height: 22mm; object-fit: contain; }
+.invoice-title { min-width: 68mm; text-align: right; }
+.invoice-title h2 { margin: 0; color: #1f4c45; font-size: 25pt; }
+.invoice-title dl { margin: 2mm 0 0; font-size: 8.5pt; }
+.invoice-title dl div { display: flex; justify-content: space-between; gap: 4mm; margin: 1mm 0; }
+.invoice-title dt { color: #64748b; }
+.invoice-title dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.invoice-parties { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12mm; padding: 7mm 0; }
+.invoice-parties h3, .invoice-notes h3 { margin: 0 0 3mm; color: #64748b; font-size: 8pt; font-weight: 700; text-transform: uppercase; }
+.invoice-parties .invoice-party-name { color: #17212b; font-weight: 700; }
+.invoice-details p { display: flex; justify-content: space-between; gap: 4mm; }
+.invoice-details p span { flex-shrink: 0; color: #64748b; }
+.invoice-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; }
+.invoice-table th { padding: 2.5mm 1mm; background: #173b36; color: #fff; text-align: right; }
+.invoice-table th:nth-child(2) { text-align: left; }
+.invoice-table td { padding: 3mm 1.5mm; border-bottom: 1px solid #dbe3e8; overflow-wrap: anywhere; vertical-align: top; }
+.invoice-table td { padding: 2.5mm 1mm; text-align: right; }
+.invoice-table th:nth-child(1), .invoice-table td:nth-child(1) { width: 4%; }
+.invoice-table th:nth-child(2), .invoice-table td:nth-child(2) { width: 32%; text-align: left; }
+.invoice-table th:nth-child(3), .invoice-table td:nth-child(3) { width: 7%; }
+.invoice-table th:nth-child(4), .invoice-table td:nth-child(4) { width: 14%; }
+.invoice-table th:nth-child(5), .invoice-table td:nth-child(5) { width: 14%; }
+.invoice-table th:nth-child(6), .invoice-table td:nth-child(6) { width: 11%; }
+.invoice-table th:nth-child(7), .invoice-table td:nth-child(7) { width: 18%; }
+.invoice-bottom { display: grid; grid-template-columns: 1fr 72mm; gap: 12mm; margin-top: 6mm; }
+.invoice-notes { white-space: pre-wrap; }
+.invoice-totals p { display: flex; justify-content: space-between; gap: 4mm; margin: 0; padding: 1.5mm 0; border-bottom: 1px solid #e2e8f0; }
+.invoice-totals .invoice-grand-total { margin: 1mm 0; padding: 3mm 0; border-top: 2px solid #173b36; border-bottom: 2px solid #173b36; color: #173b36; font-size: 12pt; }
+.invoice-signatures { display: flex; justify-content: space-between; gap: 24mm; margin-top: 12mm; }
+.invoice-signatures div { width: 70mm; padding-top: 3mm; border-top: 1px solid #64748b; text-align: center; color: #64748b; font-size: 8pt; }
+.invoice-footer { text-align: center; }
+.invoice-thank-you { margin: 3mm 0 0; font-size: 9pt; font-weight: 700; }
+.invoice-receipt-footer { margin: 2mm 0 0; overflow-wrap: anywhere; color: #475569; font-size: 8pt; }
+
+@page thermalReceipt { size: 80mm auto; margin: 0; }
+@page invoicePage { size: A4; margin: 10mm; }
+
+@media print {
+  html, body { min-height: 0; margin: 0 !important; background: #fff !important; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .no-print { display: none !important; }
+  body.pos-print-active * { visibility: hidden !important; }
+  body.pos-print-active .pos-print-only,
+  body.pos-print-active .pos-print-only * { visibility: visible !important; }
+  body.pos-print-active .pos-print-only {
+    position: absolute;
+    inset: 0 auto auto 0;
+    display: block !important;
+    width: 100%;
+    z-index: 99999;
+  }
+  .print-page { min-height: 0; padding: 0; background: #fff; }
+  .print-page-thermal { page: thermalReceipt; }
+  .print-page-a4 { page: invoicePage; }
+  .thermal-paper { width: 72mm; max-width: 100%; margin: 0 auto; padding: 4mm; box-shadow: none; }
+  .invoice-paper { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+  .invoice-table thead { display: table-header-group; }
+  .invoice-table tr { break-inside: avoid; }
+  .invoice-footer { break-inside: avoid; }
+}
+
+@media screen and (max-width: 760px) {
+  .print-page { padding: 12px; overflow-x: hidden; }
+  .thermal-paper { width: 100%; max-width: 72mm; }
+  .invoice-paper { width: 100%; margin: 0 auto; padding: 12px; }
+  .invoice-header { gap: 12px; }
+  .invoice-title { min-width: 0; }
+  .invoice-title h2 { font-size: 18pt; }
+  .invoice-parties { gap: 12px; }
+  .invoice-bottom { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .invoice-signatures { gap: 16px; }
+  .invoice-signatures div { width: 50%; }
+  .invoice-table { font-size: 6pt; }
+}

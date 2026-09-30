@@ -10,12 +10,14 @@ import {
   AlertCircle,
   CheckCircle2,
   Store,
+  Printer,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils";
 import { useBranch } from "@/components/context/BranchContext";
+import { PrintSalePage } from "@/components/print/PrintSalePage";
 
 interface CatalogProduct {
   _id: string;
@@ -35,6 +37,8 @@ interface CartLine {
   unitPrice: number;
   quantity: number;
 }
+
+type PrintFormat = "80mm" | "A4";
 
 const PAYMENT_METHODS = [
   { value: "cash", label: "Cash" },
@@ -61,8 +65,34 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [completedSale, setCompletedSale] = useState<{ id: string; invoiceNumber: string } | null>(null);
+  const [defaultPrintFormat, setDefaultPrintFormat] = useState<PrintFormat | null>(null);
+  const [printJob, setPrintJob] = useState<{ saleId: string; format: PrintFormat } | null>(null);
 
   const branchLockedToAll = selectedBranchId === "ALL" || !selectedBranchId;
+
+  const loadDefaultPrintFormat = useCallback(async () => {
+    try {
+      const response = await fetch("/api/businesses/me", { cache: "no-store" });
+      const data = response.ok ? await response.json() : null;
+      const format: PrintFormat = data?.business?.settings?.defaultPrintFormat === "A4" ? "A4" : "80mm";
+      setDefaultPrintFormat(format);
+      return format;
+    } catch {
+      setDefaultPrintFormat("80mm");
+      return "80mm" as const;
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDefaultPrintFormat();
+  }, [loadDefaultPrintFormat]);
+
+  const finishPrint = useCallback(() => setPrintJob(null), []);
+  const handlePrintError = useCallback((message: string) => {
+    setError(message);
+    setPrintJob(null);
+  }, []);
 
   const fetchProducts = useCallback(async (term: string) => {
     setIsSearching(true);
@@ -71,6 +101,7 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
         status: "active",
         limit: "30",
       });
+      if (selectedBranchId) params.set("branchId", selectedBranchId);
       if (term.trim()) params.set("search", term.trim());
       const res = await fetch(`/api/products?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
@@ -83,7 +114,7 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
     } finally {
       setIsSearching(false);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -116,6 +147,7 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
   function addToCart(product: CatalogProduct) {
     setError("");
     setSuccess("");
+    setCompletedSale(null);
     setCart((prev) => {
       const existing = prev.find((line) => line.productId === product._id);
       if (existing) {
@@ -183,7 +215,10 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
         throw new Error(data.error || "Failed to complete sale.");
       }
 
+      const printFormat = defaultPrintFormat || await loadDefaultPrintFormat();
       setSuccess(`Sale ${data.sale.invoiceNumber} completed.`);
+      setCompletedSale({ id: data.sale._id, invoiceNumber: data.sale.invoiceNumber });
+      setPrintJob({ saleId: data.sale._id, format: printFormat });
       setCart([]);
       setDiscount("0");
       setPaidAmount("");
@@ -195,7 +230,13 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
     }
   }
 
+  function requestPrint(format: PrintFormat) {
+    if (!completedSale) return;
+    setPrintJob({ saleId: completedSale.id, format });
+  }
+
   return (
+    <>
     <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
       <Card className="xl:col-span-3 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -390,6 +431,19 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
           </div>
         )}
 
+        {completedSale && (
+          <div className="space-y-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+            <p className="text-xs font-medium text-emerald-800">Print sale {completedSale.invoiceNumber}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={!defaultPrintFormat} onClick={() => defaultPrintFormat && requestPrint(defaultPrintFormat)}>
+                <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Default
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => requestPrint("80mm")}>Print 80mm</Button>
+              <Button size="sm" variant="outline" onClick={() => requestPrint("A4")}>Print A4</Button>
+            </div>
+          </div>
+        )}
+
         <Button
           className="w-full"
           onClick={completeSale}
@@ -404,5 +458,16 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
         </p>
       </Card>
     </div>
+    {printJob && (
+      <PrintSalePage
+        key={`${printJob.saleId}:${printJob.format}`}
+        saleId={printJob.saleId}
+        format={printJob.format}
+        embedded
+        onPrintFinished={finishPrint}
+        onError={handlePrintError}
+      />
+    )}
+    </>
   );
 }

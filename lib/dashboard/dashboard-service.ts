@@ -26,8 +26,26 @@ export async function getDashboardData(context: TenantContext) {
   endOfDay.setDate(endOfDay.getDate() + 1);
 
   const canViewSales = hasPermission(context, "SALE_VIEW");
+  const canViewAllBranches =
+    context.role === "PLATFORM_OWNER" ||
+    context.role === "PLATFORM_ADMIN" ||
+    context.role === "SUPER_ADMIN" ||
+    context.role === "BUSINESS_OWNER" ||
+    context.branchAccess === "ALL_BRANCHES";
+  const dashboardBranchIds = context.activeBranchId && context.activeBranchId !== "ALL"
+    ? [context.activeBranchId]
+    : canViewAllBranches
+      ? undefined
+      : context.branchIds;
+  const activeProductsQuery: Record<string, unknown> = scopeToTenant(context, { status: "active" });
+  if (dashboardBranchIds) {
+    activeProductsQuery.$or = [
+      { stockByBranch: { $elemMatch: { branchId: { $in: dashboardBranchIds } } } },
+      { "variants.stockByBranch.branchId": { $in: dashboardBranchIds } },
+    ];
+  }
   const salesMatch = canViewSales
-    ? buildSalesQuery(context, undefined, {
+    ? buildSalesQuery(context, context.activeBranchId === "ALL" ? undefined : context.activeBranchId, {
         status: "completed",
         createdAt: { $gte: startOfDay, $lt: endOfDay },
       })
@@ -51,8 +69,11 @@ export async function getDashboardData(context: TenantContext) {
           },
         ])
       : Promise.resolve([]),
-    Product.countDocuments(scopeToTenant(context, { status: "active" })),
-    Branch.find(buildAuthorizedBranchQuery(context)).select({ _id: 1 }).lean(),
+    Product.countDocuments(activeProductsQuery),
+    Branch.find(buildAuthorizedBranchQuery(
+      context,
+      context.activeBranchId && context.activeBranchId !== "ALL" ? [context.activeBranchId] : undefined
+    )).select({ _id: 1 }).lean(),
   ]);
 
   return {
@@ -66,7 +87,10 @@ export async function getDashboardData(context: TenantContext) {
 export async function getRecentSales(context: TenantContext) {
   if (!context.businessId || !hasPermission(context, "SALE_VIEW")) return [];
 
-  const { sales } = await listSales(context, { limit: 5 });
+  const { sales } = await listSales(context, {
+    limit: 5,
+    branchId: context.activeBranchId === "ALL" ? undefined : context.activeBranchId,
+  });
   if (sales.length === 0) return [];
 
   const branchIds = Array.from(new Set(sales.map((sale) => sale.branchId)));

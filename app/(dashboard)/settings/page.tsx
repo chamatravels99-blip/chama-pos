@@ -1,14 +1,15 @@
 import React from "react";
-import { Settings, Building, Store, CreditCard, Shield, Sliders } from "lucide-react";
+import { Building, Store, CreditCard, Shield } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { getTenantContext } from "@/lib/auth/session";
+import { getEffectiveTenantContext, hasPermission } from "@/lib/auth/session";
 import { getCurrentBusiness } from "@/lib/business/business-service";
 import { listAuthorizedBranches } from "@/lib/branches/branch-service";
+import { ReceiptPrintSettings } from "@/components/settings/ReceiptPrintSettings";
 
 export default async function SettingsPage() {
-  const tenantContext = await getTenantContext();
+  const tenantContext = await getEffectiveTenantContext();
   const [business, branches] = await Promise.all([
     getCurrentBusiness(tenantContext),
     listAuthorizedBranches(tenantContext),
@@ -24,6 +25,11 @@ export default async function SettingsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Business Profile */}
         <div className="lg:col-span-2 space-y-6">
+          <ReceiptPrintSettings
+            defaultPrintFormat={business?.settings?.defaultPrintFormat || "80mm"}
+            canEdit={hasPermission(tenantContext, "SETTINGS_EDIT")}
+          />
+
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">

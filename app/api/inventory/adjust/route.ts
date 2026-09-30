@@ -2,11 +2,13 @@ import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
   assertBranchAccess,
+  resolveRequestedBranch,
 } from "@/lib/auth/session";
 import { logAuditEvent } from "@/lib/db/audit";
 import { adjustStock, StockValidationError } from "@/lib/inventory/stock-service";
@@ -20,11 +22,18 @@ const ALLOWED_ADJUSTMENT_TYPES = new Set(["purchase_received", "adjustment"]);
 
 export async function POST(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await connectToDatabase();
 
     const body = await request.json().catch(() => ({}));
-    const branchId = typeof body.branchId === "string" ? body.branchId.trim() : "";
+    if (Object.prototype.hasOwnProperty.call(body, "businessId")) {
+      if (typeof body.businessId !== "string") {
+        return NextResponse.json({ error: "Invalid business context." }, { status: 400 });
+      }
+      assertEffectiveBusinessId(tenantContext, body.businessId);
+    }
+    const requestedBranchId = typeof body.branchId === "string" ? body.branchId.trim() : "";
+    const branchId = resolveRequestedBranch(tenantContext, requestedBranchId) || "";
     const productId = typeof body.productId === "string" ? body.productId.trim() : "";
     const variantId = typeof body.variantId === "string" ? body.variantId.trim() : "";
     const rawType = typeof body.type === "string" ? body.type.trim() : "";
@@ -114,7 +123,7 @@ export async function POST(request: NextRequest) {
       await session.endSession();
     }
 
-    const branch = await Branch.findById(branchId).lean();
+    const branch = await Branch.findOne({ _id: branchId, businessId }).lean();
 
     await logAuditEvent({
       businessId: businessId,

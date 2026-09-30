@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { X, Package, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { useBranch } from "@/components/context/BranchContext";
 
 export interface ProductFormData {
   name: string;
@@ -25,12 +26,6 @@ interface ProductFormProps {
   onCancel: () => void;
 }
 
-interface BranchOption {
-  _id: string;
-  name: string;
-  code: string;
-}
-
 const EMPTY_FORM: ProductFormData = {
   name: "",
   sku: "",
@@ -45,12 +40,11 @@ const EMPTY_FORM: ProductFormData = {
 };
 
 export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductFormProps) {
+  const { branches, selectedBranchId: activeBranchId } = useBranch();
   const [form, setForm] = useState<ProductFormData>({ ...EMPTY_FORM });
-  const [branches, setBranches] = useState<BranchOption[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [openingQuantity, setOpeningQuantity] = useState("0");
   const [lowStockThreshold, setLowStockThreshold] = useState("5");
-  const [isBranchesLoading, setIsBranchesLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -76,31 +70,24 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
 
   useEffect(() => {
     if (mode !== "create") return;
-    let cancelled = false;
-
-    async function loadBranches() {
-      setIsBranchesLoading(true);
-      try {
-        const response = await fetch("/api/branches?accessible=true", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Failed to load accessible branches.");
-        if (cancelled) return;
-        const accessibleBranches: BranchOption[] = data.branches || [];
-        setBranches(accessibleBranches);
-        setSelectedBranchId(accessibleBranches[0]?._id || "");
-        if (accessibleBranches.length === 0) setErrorMsg("No accessible active branches are available for this business.");
-      } catch (error) {
-        if (!cancelled) {
-          setErrorMsg(error instanceof Error ? error.message : "Failed to load accessible branches.");
-        }
-      } finally {
-        if (!cancelled) setIsBranchesLoading(false);
-      }
+    const creationBranches = activeBranchId && activeBranchId !== "ALL"
+      ? branches.filter((branch) => branch._id === activeBranchId)
+      : branches;
+    setSelectedBranchId(
+      activeBranchId && activeBranchId !== "ALL"
+        ? activeBranchId
+        : creationBranches[0]?._id || ""
+    );
+    if (creationBranches.length === 0) {
+      setErrorMsg("No accessible active branches are available for this business.");
+    } else {
+      setErrorMsg("");
     }
+  }, [mode, branches, activeBranchId]);
 
-    void loadBranches();
-    return () => { cancelled = true; };
-  }, [mode]);
+  const creationBranches = activeBranchId && activeBranchId !== "ALL"
+    ? branches.filter((branch) => branch._id === activeBranchId)
+    : branches;
 
   function set(field: keyof ProductFormData, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -221,11 +208,11 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
                       setLowStockThreshold("5");
                     }}
                     className={inputClass}
-                    disabled={isBranchesLoading || branches.length === 0}
+                    disabled={branches.length === 0}
                     required
                   >
-                    <option value="">{isBranchesLoading ? "Loading branches..." : "Select a branch"}</option>
-                    {branches.map((branch) => (
+                    <option value="">{branches.length === 0 ? "Loading branches..." : "Select a branch"}</option>
+                    {creationBranches.map((branch) => (
                       <option key={branch._id} value={branch._id}>{branch.name} ({branch.code})</option>
                     ))}
                   </select>
@@ -403,7 +390,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
             <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isLoading} disabled={mode === "create" && (isBranchesLoading || branches.length === 0)}>
+            <Button type="submit" variant="primary" size="sm" isLoading={isLoading} disabled={mode === "create" && branches.length === 0}>
               {isLoading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
               {mode === "create" ? "Add Product" : "Save Changes"}
             </Button>

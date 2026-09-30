@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import { Product } from "@/models/Product";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
   requirePermission,
-  isPlatformRole,
+  resolveRequestedBranch,
   AuthorizationError,
   AuthenticationError,
 } from "@/lib/auth/session";
 import { logAuditEvent } from "@/lib/db/audit";
+import { scopeProductStock } from "@/lib/products/product-service";
 
 export const dynamic = "force-dynamic";
 
@@ -21,24 +22,18 @@ type RouteContext = { params: { id: string } };
  */
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("PRODUCT_VIEW");
     await connectToDatabase();
 
-    const isPlatform = isPlatformRole(tenantContext.role);
-
-    const product = await Product.findById(params.id).lean();
+    const selectedBranchId = resolveRequestedBranch(tenantContext, _request.nextUrl.searchParams.get("branchId") || undefined);
+    const product = await Product.findOne({ _id: params.id, businessId: tenantContext.businessId }).lean();
 
     if (!product) {
       return NextResponse.json({ error: "Product not found." }, { status: 404 });
     }
 
-    // Enforce tenant isolation — even for GET by ID
-    if (!isPlatform && product.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "Product not found." }, { status: 404 });
-    }
-
-    return NextResponse.json({ success: true, product });
+    return NextResponse.json({ success: true, product: scopeProductStock(product, tenantContext, selectedBranchId) });
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
@@ -59,19 +54,12 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
  */
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("PRODUCT_EDIT");
     await connectToDatabase();
 
-    const isPlatform = isPlatformRole(tenantContext.role);
-
-    // Fetch product first — must belong to tenant
-    const existing = await Product.findById(params.id);
+    const existing = await Product.findOne({ _id: params.id, businessId: tenantContext.businessId });
     if (!existing) {
-      return NextResponse.json({ error: "Product not found." }, { status: 404 });
-    }
-
-    if (!isPlatform && existing.businessId !== tenantContext.businessId) {
       return NextResponse.json({ error: "Product not found." }, { status: 404 });
     }
 
@@ -133,8 +121,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       updates.costPrice = Number(updates.costPrice);
     }
 
-    const updated = await Product.findByIdAndUpdate(
-      params.id,
+    const updated = await Product.findOneAndUpdate(
+      { _id: params.id, businessId: tenantContext.businessId },
       { $set: updates },
       { new: true, runValidators: true }
     ).lean();
@@ -178,23 +166,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
  */
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("PRODUCT_DELETE");
     await connectToDatabase();
 
-    const isPlatform = isPlatformRole(tenantContext.role);
-
-    const existing = await Product.findById(params.id);
+    const existing = await Product.findOne({ _id: params.id, businessId: tenantContext.businessId });
     if (!existing) {
       return NextResponse.json({ error: "Product not found." }, { status: 404 });
     }
 
-    if (!isPlatform && existing.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "Product not found." }, { status: 404 });
-    }
-
     // Soft-delete: set status to inactive and isActive to false
-    await Product.findByIdAndUpdate(params.id, {
+    await Product.findOneAndUpdate({ _id: params.id, businessId: tenantContext.businessId }, {
       $set: { status: "inactive", isActive: false },
     });
 

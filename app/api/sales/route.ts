@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
+  resolveRequestedBranch,
   requireAuth,
   requirePermission,
   AuthorizationError,
@@ -22,16 +24,17 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SALE_VIEW");
     await connectToDatabase();
 
     const { searchParams } = request.nextUrl;
+    assertEffectiveBusinessId(tenantContext, searchParams.get("businessId"));
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
     const result = await listSales(tenantContext, {
-      branchId: searchParams.get("branchId") || undefined,
+      branchId: resolveRequestedBranch(tenantContext, searchParams.get("branchId") || undefined),
       cashierUserId: searchParams.get("cashierUserId") || undefined,
       page: Number.isFinite(page) ? page : 1,
       limit: Number.isFinite(limit) ? limit : 50,
@@ -66,15 +69,23 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth();
     await requirePermission("POS_ACCESS");
     await requirePermission("SALE_CREATE");
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await connectToDatabase();
 
     const body = await request.json().catch(() => ({}));
+    if (Object.prototype.hasOwnProperty.call(body, "businessId")) {
+      if (typeof body.businessId !== "string") {
+        return NextResponse.json({ error: "Invalid business context." }, { status: 400 });
+      }
+      assertEffectiveBusinessId(tenantContext, body.businessId);
+    }
+    const requestedBranchId = typeof body.branchId === "string" ? body.branchId : undefined;
+    const selectedBranchId = resolveRequestedBranch(tenantContext, requestedBranchId);
 
     const sale = await createSale(
       tenantContext,
       { userId: session.userId, name: session.name },
-      body
+      { ...body, branchId: selectedBranchId }
     );
 
     return NextResponse.json({ success: true, sale }, { status: 201 });

@@ -3,10 +3,12 @@ import { connectToDatabase } from "@/lib/db/connection";
 import { User } from "@/models/User";
 import { Branch } from "@/models/Branch";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  assertEffectiveBusinessId,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
+  resolveRequestedBranch,
 } from "@/lib/auth/session";
 import { scopeToTenant } from "@/lib/db/tenant-context";
 import { hashPassword } from "@/lib/auth/password";
@@ -22,24 +24,19 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("USER_VIEW");
     await connectToDatabase();
 
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    let query: Record<string, unknown> = {};
-
-    if (isPlatformAdmin) {
-      const targetBusinessId = request.nextUrl.searchParams.get("businessId");
-      if (targetBusinessId) {
-        query.businessId = targetBusinessId;
-      }
-    } else {
-      query = scopeToTenant(tenantContext, query);
+    assertEffectiveBusinessId(tenantContext, request.nextUrl.searchParams.get("businessId"));
+    const query: Record<string, unknown> = scopeToTenant(tenantContext, {});
+    const activeBranchId = resolveRequestedBranch(tenantContext);
+    if (activeBranchId) {
+      query.$or = [
+        { role: "BUSINESS_OWNER" },
+        { branchAccess: "ALL_BRANCHES" },
+        { branchIds: activeBranchId },
+      ];
     }
 
     const users = await User.find(query)
@@ -71,7 +68,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("USER_CREATE");
     await connectToDatabase();
 
@@ -127,15 +124,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine target businessId
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    let targetBusinessId: string | null = tenantContext.businessId;
-    if (isPlatformAdmin && body.businessId) {
-      targetBusinessId = body.businessId;
+    if (Object.prototype.hasOwnProperty.call(body, "businessId")) {
+      if (typeof body.businessId !== "string") {
+        return NextResponse.json({ error: "Invalid business context." }, { status: 400 });
+      }
+      assertEffectiveBusinessId(tenantContext, body.businessId);
     }
+    const targetBusinessId = tenantContext.businessId;
 
     // Validate assigned branches belong to this business
     let validatedBranchIds: string[] = [];
@@ -143,6 +138,8 @@ export async function POST(request: NextRequest) {
       const validBranches = await Branch.find({
         businessId: targetBusinessId,
         _id: { $in: branchIds },
+        status: "active",
+        isActive: { $ne: false },
       }).select("_id");
       validatedBranchIds = validBranches.map((b) => b._id.toString());
     }

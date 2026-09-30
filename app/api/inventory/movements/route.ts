@@ -3,11 +3,11 @@ import { connectToDatabase } from "@/lib/db/connection";
 import { StockMovement } from "@/models/StockMovement";
 import { addMovementNames } from "@/lib/inventory/movement-display";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
-  isPlatformRole,
+  resolveRequestedBranch,
 } from "@/lib/auth/session";
 import { scopeToTenant, scopeToBranch } from "@/lib/db/tenant-context";
 
@@ -15,22 +15,20 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("STOCK_VIEW");
     await connectToDatabase();
 
     const { searchParams } = request.nextUrl;
-    const branchId = searchParams.get("branchId") || undefined;
+    const branchId = resolveRequestedBranch(tenantContext, searchParams.get("branchId") || undefined);
     const productId = searchParams.get("productId") || undefined;
     const type = searchParams.get("type") || undefined;
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
 
     const baseQuery: Record<string, unknown> = scopeToTenant(tenantContext, {});
-    if (!isPlatformRole(tenantContext.role)) {
-      const branchScoped = scopeToBranch(tenantContext, branchId || undefined, baseQuery);
-      Object.assign(baseQuery, branchScoped);
-    }
+    const branchScoped = scopeToBranch(tenantContext, branchId || undefined, baseQuery);
+    Object.assign(baseQuery, branchScoped);
 
     if (branchId && branchId !== "ALL") {
       baseQuery.branchId = branchId;

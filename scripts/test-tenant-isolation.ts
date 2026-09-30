@@ -6,6 +6,7 @@ import { Business } from "../models/Business";
 import { Branch } from "../models/Branch";
 import { User } from "../models/User";
 import { Product } from "../models/Product";
+import { Sale } from "../models/Sale";
 import { Supplier } from "../models/Supplier";
 import { StockMovement } from "../models/StockMovement";
 import { AuditLog } from "../models/AuditLog";
@@ -20,6 +21,10 @@ import {
   assertBranchAccess,
   hasPermission,
   AuthorizationError,
+  assertEffectiveBusinessId,
+  resolveRequestedBranch,
+  resolveActiveBranchId,
+  isPlatformRole,
 } from "../lib/auth/session";
 import { hashPassword, verifyPassword } from "../lib/auth/password";
 import { TenantContext, UserRole, DEFAULT_ROLE_PERMISSIONS } from "../types";
@@ -38,7 +43,7 @@ import {
   buildMovementReferenceQueries,
   mapMovementNames,
 } from "../lib/inventory/movement-display";
-import { createProductWithOpeningStock, ProductCreationError } from "../lib/products/product-service";
+import { createProductWithOpeningStock, ProductCreationError, scopeProductStock } from "../lib/products/product-service";
 import { buildCurrentBusinessQuery, getCurrentBusiness } from "../lib/business/business-service";
 import { buildAuthorizedBranchQuery, listAuthorizedBranches } from "../lib/branches/branch-service";
 import { buildSalesQuery } from "../lib/sales/sale-service";
@@ -146,6 +151,44 @@ async function runIsolationTests() {
           businessName: bizPhone.name,
         };
 
+        const platformModzoneContext: TenantContext = {
+          ...modzoneContext,
+          role: "PLATFORM_ADMIN",
+          activeBranchId: "ALL",
+        };
+        const platformPhoneContext: TenantContext = {
+          ...phoneContext,
+          role: "PLATFORM_ADMIN",
+          activeBranchId: "ALL",
+        };
+        const [platformModzoneProducts, platformPhoneProducts, platformModzoneSales, platformPhoneSales,
+          platformModzoneInventory, platformModzoneUsers] = await Promise.all([
+          Product.find(scopeToTenant(platformModzoneContext, {})).lean(),
+          Product.find(scopeToTenant(platformPhoneContext, {})).lean(),
+          Sale.find(buildSalesQuery(platformModzoneContext, "ALL")).lean(),
+          Sale.find(buildSalesQuery(platformPhoneContext, "ALL")).lean(),
+          Product.find(scopeToTenant(platformModzoneContext, { stockByBranch: { $exists: true } })).lean(),
+          User.find(scopeToTenant(platformModzoneContext, {})).lean(),
+        ]);
+        assert(
+          platformModzoneProducts.every((product) => product.businessId === bizModzone._id.toString()) &&
+            platformPhoneProducts.every((product) => product.businessId === bizPhone._id.toString()),
+          "Platform Products: real tenant queries return only the selected business"
+        );
+        passedCount++;
+        assert(
+          platformModzoneSales.every((sale) => sale.businessId === bizModzone._id.toString()) &&
+            platformPhoneSales.every((sale) => sale.businessId === bizPhone._id.toString()),
+          "Platform Sales: real All Branches queries never combine businesses"
+        );
+        passedCount++;
+        assert(
+          platformModzoneInventory.every((product) => product.businessId === bizModzone._id.toString()) &&
+            platformModzoneUsers.every((user) => user.businessId === bizModzone._id.toString()),
+          "Platform Inventory and Users: real tenant queries use the selected business"
+        );
+        passedCount++;
+
         const modzoneBusinessInfo = await getCurrentBusiness(modzoneContext);
         const phoneBusinessInfo = await getCurrentBusiness(phoneContext);
         assert(
@@ -173,6 +216,13 @@ async function runIsolationTests() {
           companyName: `Tenant Isolation Supplier ${Date.now()}`,
         });
         try {
+          const platformModzoneSuppliers = await Supplier.find(scopeToTenant(platformModzoneContext, {})).lean();
+          assert(
+            platformModzoneSuppliers.some((supplier) => supplier._id.toString() === isolationSupplier._id.toString()) &&
+              platformModzoneSuppliers.every((supplier) => supplier.businessId === bizModzone._id.toString()),
+            "Platform Suppliers: real query returns selected-business suppliers only"
+          );
+          passedCount++;
           const phoneSupplierQuery = scopeToTenant(phoneContext, { _id: isolationSupplier._id });
           const crossTenantSupplier = await Supplier.findOne(phoneSupplierQuery);
           assert(
@@ -205,6 +255,18 @@ async function runIsolationTests() {
           code: "KDY-01",
         });
         assert(Boolean(openingBranch && restrictedBranch), "Opening stock test branches exist");
+        passedCount++;
+        const platformBranchSales = await Sale.find(
+          buildSalesQuery(platformModzoneContext, openingBranch!._id.toString())
+        ).lean();
+        const platformBranchMovements = await StockMovement.find(
+          scopeToBranch(platformModzoneContext, openingBranch!._id.toString(), {})
+        ).lean();
+        assert(
+          platformBranchSales.every((sale) => sale.businessId === bizModzone._id.toString() && sale.branchId === openingBranch!._id.toString()) &&
+            platformBranchMovements.every((movement) => movement.businessId === bizModzone._id.toString() && movement.branchId === openingBranch!._id.toString()),
+          "Platform selected branch: real sales and inventory queries use only that business branch"
+        );
         passedCount++;
         const openingBranchContext: TenantContext = {
           ...modzoneContext,
@@ -627,6 +689,25 @@ async function runIsolationTests() {
       "Branches: each shop query is tenant scoped"
     );
     passedCount++;
+    const platformBranchQuery = buildAuthorizedBranchQuery(
+      { ...shopAContext, role: "PLATFORM_ADMIN", businessId: "shop_b_id", branchIds: [] }
+    );
+    assert(
+      platformBranchQuery.businessId === "shop_b_id",
+      "Branches: platform branch listings are scoped to the explicitly selected business"
+    );
+    passedCount++;
+    const allBranchesManagerQuery = buildAuthorizedBranchQuery({
+      ...shopAContext,
+      role: "MANAGER",
+      branchAccess: "ALL_BRANCHES",
+      branchIds: [],
+    });
+    assert(
+      allBranchesManagerQuery.businessId === "shop_a_id" && !("_id" in allBranchesManagerQuery),
+      "Branches: ALL_BRANCHES returns all active branches only within the user's business"
+    );
+    passedCount++;
     const restrictedShopAContext: TenantContext = {
       ...shopAContext,
       role: "MANAGER",
@@ -647,6 +728,94 @@ async function runIsolationTests() {
         JSON.stringify(restrictedSalesQuery.branchId) === JSON.stringify({ $in: ["shop_a_branch_1"] }),
       "Recent Sales: queries enforce tenant and selected-branch scope"
     );
+    passedCount++;
+    const platformBusinessAContext: TenantContext = {
+      ...shopAContext,
+      role: "PLATFORM_ADMIN",
+      branchAccess: "ALL_BRANCHES",
+      activeBranchId: "ALL",
+    };
+    const platformBusinessBContext: TenantContext = {
+      ...shopBContext,
+      role: "PLATFORM_ADMIN",
+      branchAccess: "ALL_BRANCHES",
+      activeBranchId: "ALL",
+    };
+    const platformProductQueryA = scopeToTenant(platformBusinessAContext, {});
+    const platformProductQueryB = scopeToTenant(platformBusinessBContext, {});
+    const platformInventoryQueryA = scopeToTenant(platformBusinessAContext, {});
+    const platformSupplierQueryA = scopeToTenant(platformBusinessAContext, {});
+    const platformStaffQueryA = scopeToTenant(platformBusinessAContext, {});
+    assert(
+      platformProductQueryA.businessId === "shop_a_id" && platformProductQueryB.businessId === "shop_b_id",
+      "Platform Products: each selected business receives only its own product query"
+    );
+    passedCount++;
+    assert(
+      platformInventoryQueryA.businessId === "shop_a_id" &&
+        platformSupplierQueryA.businessId === "shop_a_id" &&
+        platformStaffQueryA.businessId === "shop_a_id",
+      "Platform Inventory, Suppliers, and Users: query scopes use the selected business"
+    );
+    passedCount++;
+    const platformAllBranchSalesQuery = buildSalesQuery(platformBusinessAContext, "ALL");
+    const platformSingleBranchSalesQuery = buildSalesQuery(platformBusinessAContext, "shop_a_branch_1");
+    assert(
+      platformAllBranchSalesQuery.businessId === "shop_a_id" && !("branchId" in platformAllBranchSalesQuery) &&
+        platformSingleBranchSalesQuery.businessId === "shop_a_id" &&
+        platformSingleBranchSalesQuery.branchId === "shop_a_branch_1",
+      "Platform Sales: All Branches stays within one business and specific branch selection narrows sales"
+    );
+    passedCount++;
+    const branchScopedProductView = scopeProductStock({
+      stockByBranch: [
+        { branchId: "shop_a_branch_1", quantity: 2 },
+        { branchId: "shop_a_branch_2", quantity: 3 },
+      ],
+      variants: [{ name: "Black", stockByBranch: [
+        { branchId: "shop_a_branch_1", quantity: 1 },
+        { branchId: "shop_a_branch_2", quantity: 4 },
+      ] }],
+    }, platformBusinessAContext, "shop_a_branch_1");
+    assert(
+      branchScopedProductView.stockByBranch?.length === 1 &&
+        branchScopedProductView.stockByBranch[0].branchId === "shop_a_branch_1" &&
+        branchScopedProductView.variants?.[0].stockByBranch?.length === 1 &&
+        branchScopedProductView.variants[0].stockByBranch[0].branchId === "shop_a_branch_1",
+      "Platform Products: selected branch filters base-product and variant stock rows"
+    );
+    passedCount++;
+    const switchedPlatformBranchQuery = buildAuthorizedBranchQuery(platformBusinessBContext);
+    assert(
+      switchedPlatformBranchQuery.businessId === "shop_b_id" && !("_id" in switchedPlatformBranchQuery),
+      "Platform business switch: prior-business branch filters do not carry into the new business"
+    );
+    passedCount++;
+    assert(
+      resolveActiveBranchId(platformBusinessBContext, "shop_a_branch_1", false) === "ALL",
+      "Platform business switch: a branch belonging to the previous business resets to All Branches"
+    );
+    passedCount++;
+    let forgedBusinessRejected = false;
+    try {
+      assertEffectiveBusinessId(platformBusinessAContext, "shop_b_id");
+    } catch (error) {
+      forgedBusinessRejected = error instanceof AuthorizationError;
+    }
+    assert(forgedBusinessRejected, "Platform tenant APIs: a forged business ID cannot override active selection");
+    passedCount++;
+    let activeBranchOverrideRejected = false;
+    try {
+      resolveRequestedBranch(
+        { ...platformBusinessAContext, activeBranchId: "shop_a_branch_1" },
+        "shop_a_branch_2"
+      );
+    } catch (error) {
+      activeBranchOverrideRejected = error instanceof AuthorizationError;
+    }
+    assert(activeBranchOverrideRejected, "Platform branch context: a request cannot override the selected branch");
+    passedCount++;
+    assert(isPlatformRole("SUPER_ADMIN"), "Platform roles: SUPER_ADMIN alias receives platform business context");
     passedCount++;
     let unscopedPlatformSalesRejected = false;
     try {

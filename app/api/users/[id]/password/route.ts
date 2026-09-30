@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import { User } from "@/models/User";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
   hasPermission,
   AuthorizationError,
   AuthenticationError,
@@ -21,34 +21,25 @@ type RouteContext = { params: { id: string } };
  */
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await connectToDatabase();
-
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
 
     const isSelf = tenantContext.userId === params.id;
     const canEditUsers = hasPermission(tenantContext, "USER_EDIT");
 
-    if (!isSelf && !canEditUsers && !isPlatformAdmin) {
+    if (!isSelf && !canEditUsers) {
       return NextResponse.json(
         { error: "Forbidden: You lack permissions to change this user's password." },
         { status: 403 }
       );
     }
 
-    const targetUser = await User.findById(params.id);
+    const targetUser = await User.findOne({ _id: params.id, businessId: tenantContext.businessId });
     if (!targetUser) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     // Tenant isolation verification
-    if (!isPlatformAdmin && targetUser.businessId !== tenantContext.businessId) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
-
     const body = await request.json();
     const { password, confirmPassword } = body;
 

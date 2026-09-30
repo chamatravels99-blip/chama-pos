@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { getTenantContext, AuthorizationError, AuthenticationError } from "@/lib/auth/session";
+import { NextRequest, NextResponse } from "next/server";
+import { getEffectiveTenantContext, assertEffectiveBusinessId, AuthorizationError, AuthenticationError } from "@/lib/auth/session";
 import { TenantSecurityError } from "@/lib/db/tenant-context";
 import { listAuthorizedBranches } from "@/lib/branches/branch-service";
 
@@ -9,13 +9,19 @@ export const dynamic = "force-dynamic";
  * GET /api/branches
  * Retrieves active branches scoped strictly to the authenticated tenant.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
-    const branches = await listAuthorizedBranches(tenantContext);
+    const tenantContext = await getEffectiveTenantContext();
+    const requestedBusinessId = request.nextUrl.searchParams.get("businessId")?.trim();
+    if (requestedBusinessId) assertEffectiveBusinessId(tenantContext, requestedBusinessId);
+
+    const branches = tenantContext.businessId
+      ? await listAuthorizedBranches(tenantContext)
+      : [];
 
     return NextResponse.json({
       success: true,
+      businessId: tenantContext.businessId,
       branches,
     });
   } catch (error) {

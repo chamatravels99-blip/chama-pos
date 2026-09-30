@@ -3,7 +3,7 @@ import { connectToDatabase } from "@/lib/db/connection";
 import {
   AuthenticationError,
   AuthorizationError,
-  getTenantContext,
+  requireEffectiveTenantContext,
   requirePermission,
 } from "@/lib/auth/session";
 import { scopeToTenant, TenantSecurityError } from "@/lib/db/tenant-context";
@@ -15,7 +15,7 @@ type RouteContext = { params: { id: string } };
 
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SUPPLIER_EDIT");
     await connectToDatabase();
 
@@ -58,7 +58,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SUPPLIER_EDIT");
     await connectToDatabase();
 

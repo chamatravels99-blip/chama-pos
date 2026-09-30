@@ -3,7 +3,7 @@ import { connectToDatabase } from "@/lib/db/connection";
 import {
   AuthenticationError,
   AuthorizationError,
-  getTenantContext,
+  requireEffectiveTenantContext,
   requirePermission,
 } from "@/lib/auth/session";
 import { scopeToTenant, TenantSecurityError } from "@/lib/db/tenant-context";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SUPPLIER_VIEW");
     await connectToDatabase();
 
@@ -36,7 +36,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SUPPLIER_CREATE");
     await connectToDatabase();
 

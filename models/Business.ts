@@ -11,6 +11,11 @@ const BusinessSettingsSchema = new Schema(
     enableTaxes: { type: Boolean, default: false },
     receiptHeader: { type: String },
     receiptFooter: { type: String },
+    defaultPrintFormat: {
+  type: String,
+  enum: ["80mm", "A4"],
+  default: "80mm",
+},
     lowStockThresholdDefault: { type: Number, default: 5 },
   },
   { _id: false }

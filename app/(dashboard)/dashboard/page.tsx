@@ -20,12 +20,19 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils";
-import { getTenantContext, getSession } from "@/lib/auth/session";
+import { getEffectiveTenantContext, getSession } from "@/lib/auth/session";
 import { getCurrentBusiness } from "@/lib/business/business-service";
 import { getDashboardData, getRecentSales } from "@/lib/dashboard/dashboard-service";
 
 export default async function DashboardPage() {
-  const tenantContext = await getTenantContext();
+  const tenantContext = await getEffectiveTenantContext();
+  if (!tenantContext.businessId) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">
+        Select a business from the header to view its dashboard.
+      </div>
+    );
+  }
   const [session, business, dashboardData, recentSales] = await Promise.all([
     getSession(),
     getCurrentBusiness(tenantContext),

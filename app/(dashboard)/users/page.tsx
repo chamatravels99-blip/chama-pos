@@ -17,8 +17,10 @@ import { UserTable, ManagedUser } from "@/components/users/UserTable";
 import { UserFormModal, BranchOption, UserFormData } from "@/components/users/UserFormModal";
 import { PermissionModal } from "@/components/users/PermissionModal";
 import { ChangePasswordModal } from "@/components/users/ChangePasswordModal";
+import { useBranch } from "@/components/context/BranchContext";
 
 export default function UsersManagementPage() {
+  const { selectedBranchId } = useBranch();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
@@ -69,7 +71,7 @@ export default function UsersManagementPage() {
     } catch (err) {
       console.error("Failed to fetch branches:", err);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   // Fetch users
   const fetchUsers = useCallback(async () => {
@@ -87,7 +89,7 @@ export default function UsersManagementPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [selectedBranchId]);
 
   useEffect(() => {
     fetchBranches();

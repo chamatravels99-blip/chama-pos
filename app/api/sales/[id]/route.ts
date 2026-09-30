@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import {
-  getTenantContext,
+  requireEffectiveTenantContext,
+  resolveRequestedBranch,
   requirePermission,
   AuthorizationError,
   AuthenticationError,
@@ -19,11 +20,12 @@ type RouteContext = { params: { id: string } };
  */
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
-    const tenantContext = await getTenantContext();
+    const tenantContext = await requireEffectiveTenantContext();
     await requirePermission("SALE_VIEW");
     await connectToDatabase();
 
     const sale = await getSaleById(tenantContext, params.id);
+    resolveRequestedBranch(tenantContext, sale.branchId);
     return NextResponse.json({ success: true, sale });
   } catch (error) {
     if (error instanceof AuthenticationError) {

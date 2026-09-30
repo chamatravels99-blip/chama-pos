@@ -4,7 +4,10 @@ import { connectToDatabase } from "@/lib/db/connection";
 import { scopeToTenant } from "@/lib/db/tenant-context";
 
 export function buildAuthorizedBranchQuery(context: TenantContext, branchIds?: string[]) {
-  const query = scopeToTenant(context, { status: "active" }) as Record<string, unknown>;
+  const query = scopeToTenant(context, {
+    status: "active",
+    isActive: { $ne: false },
+  }) as Record<string, unknown>;
   const canAccessAllBranches =
     context.role === "BUSINESS_OWNER" ||
     context.role === "PLATFORM_OWNER" ||
