@@ -76,7 +76,7 @@ export const tenantNavigation: NavSection[] = [
         href: "/customers",
         icon: Users,
         requiresPermission: "CUSTOMER_VIEW",
-        description: "Customer database and store credit",
+        description: "Business-wide customer database",
       },
       {
         title: "Suppliers",

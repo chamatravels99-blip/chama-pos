@@ -42,6 +42,7 @@ export type StandardPermission =
   | "CUSTOMER_VIEW"
   | "CUSTOMER_CREATE"
   | "CUSTOMER_EDIT"
+  | "CUSTOMER_DELETE"
   // Suppliers
   | "SUPPLIER_VIEW"
   | "SUPPLIER_CREATE"
@@ -153,9 +154,10 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     category: "Customers",
     permissions: [
-      { key: "CUSTOMER_VIEW", label: "View Customers", description: "View customer profiles and history" },
+      { key: "CUSTOMER_VIEW", label: "View Customers", description: "View customer records" },
       { key: "CUSTOMER_CREATE", label: "Create Customers", description: "Register new customer profiles" },
-      { key: "CUSTOMER_EDIT", label: "Edit Customers", description: "Update customer records and credit" },
+      { key: "CUSTOMER_EDIT", label: "Edit Customers", description: "Update customer records" },
+      { key: "CUSTOMER_DELETE", label: "Deactivate Customers", description: "Deactivate customer records" },
     ],
   },
   {
@@ -249,6 +251,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, StandardPermission[]> = 
     "CUSTOMER_VIEW",
     "CUSTOMER_CREATE",
     "CUSTOMER_EDIT",
+    "CUSTOMER_DELETE",
     "SUPPLIER_VIEW",
     "SUPPLIER_CREATE",
     "SUPPLIER_EDIT",
@@ -270,7 +273,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, StandardPermission[]> = 
     "PRODUCT_VIEW",
     "STOCK_VIEW",
     "CUSTOMER_VIEW",
-    "CUSTOMER_CREATE",
   ],
   STOCK_MANAGER: [
     "DASHBOARD_VIEW",

@@ -8,6 +8,7 @@ import { User } from "../models/User";
 import { Product } from "../models/Product";
 import { Sale } from "../models/Sale";
 import { Supplier } from "../models/Supplier";
+import { Customer } from "../models/Customer";
 import { StockMovement } from "../models/StockMovement";
 import { AuditLog } from "../models/AuditLog";
 import {
@@ -47,6 +48,13 @@ import { createProductWithOpeningStock, ProductCreationError, scopeProductStock 
 import { buildCurrentBusinessQuery, getCurrentBusiness } from "../lib/business/business-service";
 import { buildAuthorizedBranchQuery, listAuthorizedBranches } from "../lib/branches/branch-service";
 import { buildSalesQuery } from "../lib/sales/sale-service";
+import {
+  createCustomer,
+  deactivateCustomer,
+  getCustomerById,
+  listCustomers,
+  updateCustomer,
+} from "../lib/customers/customer-service";
 
 // Load .env.local manually if running in standalone script
 function loadEnv() {
@@ -161,6 +169,90 @@ async function runIsolationTests() {
           role: "PLATFORM_ADMIN",
           activeBranchId: "ALL",
         };
+        const customerTestSuffix = Date.now().toString();
+        const createdCustomerIds: string[] = [];
+        try {
+          const customerA = await createCustomer(modzoneContext, { name: `Tenant Customer A ${customerTestSuffix}` });
+          createdCustomerIds.push(customerA._id);
+          assert(customerA.name.includes("Tenant Customer A"), "Customers: Business A can create its customer");
+          passedCount++;
+
+          const customerB = await createCustomer(phoneContext, { name: `Tenant Customer B ${customerTestSuffix}` });
+          createdCustomerIds.push(customerB._id);
+          assert(customerB.name.includes("Tenant Customer B"), "Customers: Business B can create its customer");
+          passedCount++;
+
+          assert(
+            await getCustomerById(modzoneContext, customerB._id) === null,
+            "Customers: Business A cannot read Business B customer"
+          );
+          passedCount++;
+          assert(
+            await updateCustomer(modzoneContext, customerB._id, { name: "Cross-tenant update" }) === null,
+            "Customers: Business A cannot update Business B customer"
+          );
+          passedCount++;
+          assert(
+            await deactivateCustomer(modzoneContext, customerB._id) === null,
+            "Customers: Business A cannot deactivate Business B customer"
+          );
+          passedCount++;
+
+          const platformCustomersA = await listCustomers(platformModzoneContext, { active: "all" });
+          const platformCustomersB = await listCustomers(platformPhoneContext, { active: "all" });
+          assert(
+            platformCustomersA.customers.some((customer) => customer._id === customerA._id) &&
+              !platformCustomersA.customers.some((customer) => customer._id === customerB._id),
+            "Platform Customers: selecting Business A returns only A customers"
+          );
+          passedCount++;
+          assert(
+            platformCustomersB.customers.some((customer) => customer._id === customerB._id) &&
+              !platformCustomersB.customers.some((customer) => customer._id === customerA._id),
+            "Platform Customers: switching to Business B returns only B customers"
+          );
+          passedCount++;
+
+          const forgedCustomer = await createCustomer(modzoneContext, {
+            name: `Forged Business Customer ${customerTestSuffix}`,
+            businessId: bizPhone._id.toString(),
+          } as Parameters<typeof createCustomer>[1]);
+          createdCustomerIds.push(forgedCustomer._id);
+          const storedForgedCustomer = await Customer.findOne({ _id: forgedCustomer._id }).lean();
+          assert(
+            storedForgedCustomer?.businessId === bizModzone._id.toString(),
+            "Customers: forged businessId is ignored in favor of authenticated tenant"
+          );
+          passedCount++;
+
+          assert(
+            await getCustomerById(modzoneContext, customerA._id) !== null &&
+              await getCustomerById(phoneContext, customerA._id) === null,
+            "Customers: BUSINESS_OWNER remains restricted to its own business"
+          );
+          passedCount++;
+
+          const managerContext: TenantContext = { ...modzoneContext, role: "MANAGER", branchAccess: "SELECTED_BRANCHES", branchIds: [] };
+          const cashierContext: TenantContext = { ...modzoneContext, role: "CASHIER", branchAccess: "SELECTED_BRANCHES", branchIds: [] };
+          assert(
+            await getCustomerById(managerContext, customerB._id) === null &&
+              await getCustomerById(cashierContext, customerB._id) === null,
+            "Customers: managers and cashiers cannot access another business's customers"
+          );
+          passedCount++;
+
+          await deactivateCustomer(modzoneContext, customerA._id);
+          const defaultCustomerList = await listCustomers(modzoneContext);
+          assert(
+            !defaultCustomerList.customers.some((customer) => customer._id === customerA._id),
+            "Customers: inactive records are excluded from the default active list"
+          );
+          passedCount++;
+        } finally {
+          if (createdCustomerIds.length > 0) {
+            await Customer.deleteMany({ _id: { $in: createdCustomerIds } });
+          }
+        }
         const [platformModzoneProducts, platformPhoneProducts, platformModzoneSales, platformPhoneSales,
           platformModzoneInventory, platformModzoneUsers] = await Promise.all([
           Product.find(scopeToTenant(platformModzoneContext, {})).lean(),
@@ -1065,6 +1157,13 @@ async function runIsolationTests() {
       hasPermission(cashierWithoutUserView, "SALE_CANCEL") === false,
       "Test 18c: Cashier without SALE_CANCEL is DENIED sale cancellation access"
     );
+    assert(
+      hasPermission(cashierWithoutUserView, "CUSTOMER_VIEW") === true &&
+        hasPermission(cashierWithoutUserView, "CUSTOMER_CREATE") === false &&
+        hasPermission(cashierWithoutUserView, "CUSTOMER_EDIT") === false &&
+        hasPermission(cashierWithoutUserView, "CUSTOMER_DELETE") === false,
+      "Customer permissions: cashier defaults grant view only"
+    );
 
     // Cashier customized with explicit PRODUCT_EDIT permission
     const customizedCashier = {
@@ -1074,6 +1173,16 @@ async function runIsolationTests() {
     assert(
       hasPermission(customizedCashier, "PRODUCT_EDIT") === true,
       "Test 18d: Cashier with customized PRODUCT_EDIT permission is GRANTED access"
+    );
+    const cashierWithCustomerWrite = {
+      role: "CASHIER" as UserRole,
+      permissions: [...DEFAULT_ROLE_PERMISSIONS.CASHIER, "CUSTOMER_CREATE", "CUSTOMER_EDIT", "CUSTOMER_DELETE"],
+    };
+    assert(
+      hasPermission(cashierWithCustomerWrite, "CUSTOMER_CREATE") &&
+        hasPermission(cashierWithCustomerWrite, "CUSTOMER_EDIT") &&
+        hasPermission(cashierWithCustomerWrite, "CUSTOMER_DELETE"),
+      "Customer permissions: explicitly granted cashier actions are allowed"
     );
 
     // Manager default permissions
@@ -1101,7 +1210,7 @@ async function runIsolationTests() {
       hasPermission(ownerPerms, "SETTINGS_EDIT") === true,
       "Test 18g: Business Owner possesses all store-level permissions"
     );
-    passedCount += 7;
+    passedCount += 9;
 
     // TEST 19: Audit Log Password Sanitization Invariant
     const sensitiveLogInput = {

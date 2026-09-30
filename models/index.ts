@@ -6,3 +6,4 @@ export * from "./AuditLog";
 export * from "./Sale";
 export * from "./StockMovement";
 export * from "./Supplier";
+export * from "./Customer";
