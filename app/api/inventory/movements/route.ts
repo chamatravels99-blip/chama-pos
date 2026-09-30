@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/connection";
 import { StockMovement } from "@/models/StockMovement";
+import { addMovementNames } from "@/lib/inventory/movement-display";
 import {
   getTenantContext,
   requirePermission,
@@ -50,7 +51,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const movements = await StockMovement.find(baseQuery).sort({ createdAt: -1 }).limit(300).lean();
+    const movementRecords = await StockMovement.find(baseQuery).sort({ createdAt: -1 }).limit(300).lean();
+    const movements = await addMovementNames(tenantContext, movementRecords);
 
     return NextResponse.json({ success: true, movements });
   } catch (error) {

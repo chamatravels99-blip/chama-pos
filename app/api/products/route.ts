@@ -10,6 +10,8 @@ import {
 } from "@/lib/auth/session";
 import { scopeToTenant } from "@/lib/db/tenant-context";
 import { logAuditEvent } from "@/lib/db/audit";
+import { createProductWithOpeningStock, ProductCreationError } from "@/lib/products/product-service";
+import { TenantSecurityError } from "@/lib/db/tenant-context";
 
 export const dynamic = "force-dynamic";
 
@@ -102,10 +104,16 @@ export async function POST(request: NextRequest) {
     const tenantContext = await getTenantContext();
     await requirePermission("PRODUCT_CREATE");
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Invalid product data." }, { status: 400 });
+    }
 
     // --- Server-side validation ---
     const { name, sku, costPrice, sellingPrice, status, description, categoryName, brand, unit, barcode } = body;
+    const branchId = typeof body.branchId === "string" ? body.branchId.trim() : "";
+    const openingQuantity = body.openingQuantity === undefined ? 0 : body.openingQuantity;
+    const lowStockThreshold = body.lowStockThreshold === undefined ? 5 : body.lowStockThreshold;
 
     const errors: string[] = [];
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -114,11 +122,23 @@ export async function POST(request: NextRequest) {
     if (!sku || typeof sku !== "string" || sku.trim().length === 0) {
       errors.push("SKU is required.");
     }
-    if (costPrice === undefined || costPrice === null || isNaN(Number(costPrice)) || Number(costPrice) < 0) {
+    if (costPrice === undefined || costPrice === null || !Number.isFinite(Number(costPrice)) || Number(costPrice) < 0) {
       errors.push("Cost price must be a non-negative number.");
     }
-    if (sellingPrice === undefined || sellingPrice === null || isNaN(Number(sellingPrice)) || Number(sellingPrice) < 0) {
+    if (sellingPrice === undefined || sellingPrice === null || !Number.isFinite(Number(sellingPrice)) || Number(sellingPrice) < 0) {
       errors.push("Selling price must be a non-negative number.");
+    }
+    if (!branchId) {
+      errors.push("Branch is required.");
+    }
+    if (typeof openingQuantity !== "number" || !Number.isFinite(openingQuantity) || openingQuantity < 0) {
+      errors.push("Opening quantity must be a non-negative finite number.");
+    }
+    if (typeof lowStockThreshold !== "number" || !Number.isFinite(lowStockThreshold) || lowStockThreshold < 0) {
+      errors.push("Low stock threshold must be a non-negative finite number.");
+    }
+    if (body.hasVariants === true || (Array.isArray(body.variants) && body.variants.length > 0)) {
+      errors.push("Variant products are not supported by this product creation form.");
     }
     if (errors.length > 0) {
       return NextResponse.json({ error: errors.join(" "), errors }, { status: 400 });
@@ -126,47 +146,25 @@ export async function POST(request: NextRequest) {
 
     await connectToDatabase();
 
-    // Determine businessId from session — platform admin can specify via body, business users cannot
-    let businessId: string;
-    const isPlatform = isPlatformRole(tenantContext.role);
-
-    if (isPlatform && body.businessId && typeof body.businessId === "string") {
-      businessId = body.businessId;
-    } else if (tenantContext.businessId) {
-      businessId = tenantContext.businessId;
-    } else {
-      return NextResponse.json({ error: "Cannot determine target business." }, { status: 400 });
-    }
-
-    // Check for duplicate SKU within this tenant
-    const existingProduct = await Product.findOne({ businessId, sku: sku.trim().toUpperCase() });
-    if (existingProduct) {
-      return NextResponse.json(
-        { error: `SKU "${sku.trim().toUpperCase()}" already exists for this business.` },
-        { status: 409 }
-      );
-    }
-
-    const productData = {
-      businessId,
+    const product = await createProductWithOpeningStock(tenantContext, {
       name: name.trim(),
       sku: sku.trim().toUpperCase(),
-      barcode: barcode?.trim() || undefined,
-      description: description?.trim() || undefined,
-      categoryName: categoryName?.trim() || undefined,
-      brand: brand?.trim() || undefined,
-      unit: unit?.trim() || "pcs",
+      barcode: typeof barcode === "string" ? barcode.trim() || undefined : undefined,
+      description: typeof description === "string" ? description.trim() || undefined : undefined,
+      categoryName: typeof categoryName === "string" ? categoryName.trim() || undefined : undefined,
+      brand: typeof brand === "string" ? brand.trim() || undefined : undefined,
+      unit: typeof unit === "string" ? unit.trim() || "pcs" : "pcs",
       costPrice: Number(costPrice),
-      price: Number(sellingPrice),
       sellingPrice: Number(sellingPrice),
       status: ["active", "inactive"].includes(status) ? status : "active",
-    };
-
-    const product = await Product.create(productData);
+      branchId,
+      openingQuantity,
+      lowStockThreshold,
+    });
 
     // Audit log
     await logAuditEvent({
-      businessId,
+      businessId: product.businessId,
       userId: tenantContext.userId,
       userName: tenantContext.businessName || "Staff User",
       userRole: tenantContext.role,
@@ -180,6 +178,8 @@ export async function POST(request: NextRequest) {
         name: product.name,
         price: product.price,
         costPrice: product.costPrice,
+        branchId,
+        openingQuantity,
       },
     });
 
@@ -190,6 +190,12 @@ export async function POST(request: NextRequest) {
     }
     if (error instanceof AuthorizationError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+    if (error instanceof TenantSecurityError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+    if (error instanceof ProductCreationError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
     }
     if ((error as { code?: number }).code === 11000) {
       return NextResponse.json({ error: "A product with this SKU already exists." }, { status: 409 });

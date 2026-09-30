@@ -5,8 +5,6 @@ import {
   ShoppingCart,
   Package,
   AlertTriangle,
-  Users,
-  Receipt,
   Plus,
   ArrowRight,
   ShieldCheck,
@@ -22,16 +20,23 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils";
-import { mockDashboardMetrics } from "@/services/mock-data";
-import { getSession } from "@/lib/auth/session";
+import { getTenantContext, getSession } from "@/lib/auth/session";
+import { getCurrentBusiness } from "@/lib/business/business-service";
+import { getDashboardData, getRecentSales } from "@/lib/dashboard/dashboard-service";
 
 export default async function DashboardPage() {
-  const session = await getSession();
+  const tenantContext = await getTenantContext();
+  const [session, business, dashboardData, recentSales] = await Promise.all([
+    getSession(),
+    getCurrentBusiness(tenantContext),
+    getDashboardData(tenantContext),
+    getRecentSales(tenantContext),
+  ]);
 
-  const businessName = session?.businessName || "Chama Modzone";
-  const userName = session?.name || "Kasun Perera";
-  const userRole = session?.role || "BUSINESS_OWNER";
-  const businessSlug = session?.businessSlug || "chama-modzone";
+  const businessName = business?.name || "Business unavailable";
+  const userName = session?.name || "Authenticated user";
+  const userRole = tenantContext.role;
+  const businessSlug = business?.slug || "Unavailable";
 
   return (
     <div className="space-y-6">
@@ -82,44 +87,30 @@ export default async function DashboardPage() {
       <QuickActionGrid />
 
       {/* Primary KPI Metric Cards (6 Key Store Indicators) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Today's Sales"
-          value={formatCurrency(mockDashboardMetrics.todaySalesTotal)}
-          changePercent={mockDashboardMetrics.todaySalesChangePercent}
+          value={dashboardData.todaySalesTotal === null ? "—" : formatCurrency(dashboardData.todaySalesTotal)}
           icon={DollarSign}
           iconColor="text-emerald-600 bg-emerald-50 border-emerald-200"
         />
         <StatCard
           title="Today's Orders"
-          value={mockDashboardMetrics.todayOrdersCount}
-          changePercent={mockDashboardMetrics.todayOrdersChangePercent}
+          value={dashboardData.todayOrdersCount ?? "—"}
           icon={ShoppingCart}
           iconColor="text-blue-600 bg-blue-50 border-blue-200"
         />
         <StatCard
           title="Active Products"
-          value={mockDashboardMetrics.totalProductsCount}
+          value={dashboardData.activeProductsCount}
           icon={Package}
           iconColor="text-purple-600 bg-purple-50 border-purple-200"
         />
         <StatCard
-          title="Low Stock Items"
-          value={mockDashboardMetrics.lowStockItemsCount}
-          icon={AlertTriangle}
-          iconColor="text-amber-600 bg-amber-50 border-amber-200"
-        />
-        <StatCard
-          title="Customers"
-          value={mockDashboardMetrics.totalCustomersCount}
-          icon={Users}
+          title="Authorized Branches"
+          value={dashboardData.authorizedBranchesCount}
+          icon={Building}
           iconColor="text-cyan-600 bg-cyan-50 border-cyan-200"
-        />
-        <StatCard
-          title="Today's Expenses"
-          value={formatCurrency(mockDashboardMetrics.todayExpensesTotal)}
-          icon={Receipt}
-          iconColor="text-rose-600 bg-rose-50 border-rose-200"
         />
       </div>
 
@@ -132,7 +123,7 @@ export default async function DashboardPage() {
               <div>
                 <CardTitle>Recent Sales Transactions</CardTitle>
                 <CardDescription>
-                  Live cashier activity across Colombo, Negombo, and Kandy branches.
+                  Recent activity within your tenant and authorized branches.
                 </CardDescription>
               </div>
               <Link
@@ -143,7 +134,7 @@ export default async function DashboardPage() {
                 <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
-            <RecentSalesTable />
+            <RecentSalesTable sales={recentSales} />
           </Card>
         </div>
 

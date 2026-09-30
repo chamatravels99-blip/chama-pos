@@ -1,11 +1,13 @@
 import React from "react";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/Badge";
-import { mockRecentSales } from "@/services/mock-data";
+import { Sale } from "@/types";
 import { CreditCard, Banknote, Landmark, Smartphone, Eye } from "lucide-react";
 import Link from "next/link";
 
-export function RecentSalesTable() {
+type RecentSale = Sale & { branchName: string; itemCount: number };
+
+export function RecentSalesTable({ sales }: { sales: RecentSale[] }) {
   const getPaymentIcon = (method: string) => {
     switch (method) {
       case "card":
@@ -37,7 +39,7 @@ export function RecentSalesTable() {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {mockRecentSales.map((sale) => (
+          {sales.map((sale) => (
             <tr key={sale._id} className="hover:bg-slate-50/75 transition-colors">
               <td className="py-3 px-4 font-mono font-medium text-slate-900">
                 {sale.invoiceNumber}
@@ -79,6 +81,7 @@ export function RecentSalesTable() {
               </td>
             </tr>
           ))}
+          {sales.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-slate-500">No sales are available for your authorized branches.</td></tr>}
         </tbody>
       </table>
     </div>

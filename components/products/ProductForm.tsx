@@ -25,6 +25,12 @@ interface ProductFormProps {
   onCancel: () => void;
 }
 
+interface BranchOption {
+  _id: string;
+  name: string;
+  code: string;
+}
+
 const EMPTY_FORM: ProductFormData = {
   name: "",
   sku: "",
@@ -40,6 +46,11 @@ const EMPTY_FORM: ProductFormData = {
 
 export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductFormProps) {
   const [form, setForm] = useState<ProductFormData>({ ...EMPTY_FORM });
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [openingQuantity, setOpeningQuantity] = useState("0");
+  const [lowStockThreshold, setLowStockThreshold] = useState("5");
+  const [isBranchesLoading, setIsBranchesLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -63,6 +74,34 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
     setErrorMsg("");
   }, [initialData, mode]);
 
+  useEffect(() => {
+    if (mode !== "create") return;
+    let cancelled = false;
+
+    async function loadBranches() {
+      setIsBranchesLoading(true);
+      try {
+        const response = await fetch("/api/branches?accessible=true", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Failed to load accessible branches.");
+        if (cancelled) return;
+        const accessibleBranches: BranchOption[] = data.branches || [];
+        setBranches(accessibleBranches);
+        setSelectedBranchId(accessibleBranches[0]?._id || "");
+        if (accessibleBranches.length === 0) setErrorMsg("No accessible active branches are available for this business.");
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMsg(error instanceof Error ? error.message : "Failed to load accessible branches.");
+        }
+      } finally {
+        if (!cancelled) setIsBranchesLoading(false);
+      }
+    }
+
+    void loadBranches();
+    return () => { cancelled = true; };
+  }, [mode]);
+
   function set(field: keyof ProductFormData, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
@@ -80,6 +119,17 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
     if (form.sellingPrice === "" || isNaN(Number(form.sellingPrice)) || Number(form.sellingPrice) < 0) {
       setErrorMsg("Selling price must be a valid non-negative number."); return;
     }
+    const openingQuantityValue = Number(openingQuantity);
+    const lowStockThresholdValue = Number(lowStockThreshold);
+    if (mode === "create" && !selectedBranchId) {
+      setErrorMsg("Select an accessible branch."); return;
+    }
+    if (mode === "create" && (!openingQuantity.trim() || !Number.isFinite(openingQuantityValue) || openingQuantityValue < 0)) {
+      setErrorMsg("Opening quantity must be a non-negative finite number."); return;
+    }
+    if (mode === "create" && (!lowStockThreshold.trim() || !Number.isFinite(lowStockThresholdValue) || lowStockThresholdValue < 0)) {
+      setErrorMsg("Low stock threshold must be a non-negative finite number."); return;
+    }
 
     setIsLoading(true);
     try {
@@ -94,6 +144,11 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
         sellingPrice: Number(form.sellingPrice),
         status: form.status,
         description: form.description.trim() || undefined,
+        ...(mode === "create" ? {
+          branchId: selectedBranchId,
+          openingQuantity: openingQuantityValue,
+          lowStockThreshold: lowStockThresholdValue,
+        } : {}),
       };
 
       const url = mode === "edit" && initialData?._id
@@ -154,6 +209,54 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
               </div>
             )}
 
+            {mode === "create" && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="sm:col-span-3">
+                  <label className={labelClass}>Branch <span className="text-rose-500">*</span></label>
+                  <select
+                    value={selectedBranchId}
+                    onChange={(event) => {
+                      setSelectedBranchId(event.target.value);
+                      setOpeningQuantity("0");
+                      setLowStockThreshold("5");
+                    }}
+                    className={inputClass}
+                    disabled={isBranchesLoading || branches.length === 0}
+                    required
+                  >
+                    <option value="">{isBranchesLoading ? "Loading branches..." : "Select a branch"}</option>
+                    {branches.map((branch) => (
+                      <option key={branch._id} value={branch._id}>{branch.name} ({branch.code})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Opening Quantity</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={openingQuantity}
+                    onChange={(event) => setOpeningQuantity(event.target.value)}
+                    className={inputClass}
+                    required
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelClass}>Low Stock Threshold</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={lowStockThreshold}
+                    onChange={(event) => setLowStockThreshold(event.target.value)}
+                    className={inputClass}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Row 1: Name */}
             <div>
               <label className={labelClass}>Product Name <span className="text-rose-500">*</span></label>
@@ -162,7 +265,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
                 className={inputClass}
-                placeholder="e.g. Pioneer 6.5&quot; 2-Way Speaker"
+                placeholder="e.g. Compact Bluetooth Speaker"
                 required
               />
             </div>
@@ -176,7 +279,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
                   value={form.sku}
                   onChange={(e) => set("sku", e.target.value.toUpperCase())}
                   className={cn(inputClass, "font-mono")}
-                  placeholder="e.g. CMZ-SPK-01"
+                  placeholder="e.g. SKU-001"
                   required
                 />
               </div>
@@ -201,7 +304,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
                   value={form.categoryName}
                   onChange={(e) => set("categoryName", e.target.value)}
                   className={inputClass}
-                  placeholder="e.g. Car Audio"
+                  placeholder="e.g. Accessories"
                 />
               </div>
               <div>
@@ -211,7 +314,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
                   value={form.brand}
                   onChange={(e) => set("brand", e.target.value)}
                   className={inputClass}
-                  placeholder="e.g. Pioneer"
+                  placeholder="e.g. Example brand"
                 />
               </div>
             </div>
@@ -300,7 +403,7 @@ export function ProductForm({ mode, initialData, onSuccess, onCancel }: ProductF
             <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isLoading}>
+            <Button type="submit" variant="primary" size="sm" isLoading={isLoading} disabled={mode === "create" && (isBranchesLoading || branches.length === 0)}>
               {isLoading && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
               {mode === "create" ? "Add Product" : "Save Changes"}
             </Button>

@@ -1,31 +1,66 @@
 "use client";
 
-import { useState } from "react";
-import { mockCurrentBusiness, mockBranches } from "@/services/mock-data";
+import { useEffect, useState } from "react";
 import { Business, Branch } from "@/types";
 
 export interface UseTenantReturn {
-  business: Business;
+  business: Business | null;
   branches: Branch[];
-  currentBranch: Branch;
+  currentBranch: Branch | null;
   switchBranch: (branchId: string) => void;
   isLoading: boolean;
 }
 
 /**
- * Hook for consuming the active tenant & branch context in client UI components.
- * Currently backed by mock data for Phase 1; designed to seamlessly wire up to
- * real session/API state in Phase 2.
+ * Hook for consuming the authenticated tenant and authorized branch context.
  */
 export function useTenant(): UseTenantReturn {
-  const [business] = useState<Business>(mockCurrentBusiness);
-  const [branches] = useState<Branch[]>(mockBranches);
-  const [currentBranchId, setCurrentBranchId] = useState<string>(
-    mockBranches.find((b) => b.isMain)?._id || mockBranches[0]._id
-  );
+  const [business, setBusiness] = useState<Business | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [currentBranchId, setCurrentBranchId] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTenant() {
+      try {
+        const [businessResponse, branchResponse] = await Promise.all([
+          fetch("/api/businesses/me", { cache: "no-store" }),
+          fetch("/api/branches", { cache: "no-store" }),
+        ]);
+        const [businessData, branchData] = await Promise.all([
+          businessResponse.json(),
+          branchResponse.json(),
+        ]);
+        if (cancelled) return;
+        setBusiness(businessResponse.ok ? businessData.business || null : null);
+        const authorizedBranches = branchResponse.ok && Array.isArray(branchData.branches)
+          ? branchData.branches
+          : [];
+        setBranches(authorizedBranches);
+        setCurrentBranchId((current) =>
+          authorizedBranches.some((branch: Branch) => branch._id === current)
+            ? current
+            : authorizedBranches.find((branch: Branch) => branch.isMain)?._id || authorizedBranches[0]?._id || ""
+        );
+      } catch {
+        if (!cancelled) {
+          setBusiness(null);
+          setBranches([]);
+          setCurrentBranchId("");
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    void loadTenant();
+    return () => { cancelled = true; };
+  }, []);
 
   const currentBranch =
-    branches.find((b) => b._id === currentBranchId) || branches[0];
+    branches.find((b) => b._id === currentBranchId) || null;
 
   const switchBranch = (branchId: string) => {
     const found = branches.find((b) => b._id === branchId);
@@ -39,6 +74,6 @@ export function useTenant(): UseTenantReturn {
     branches,
     currentBranch,
     switchBranch,
-    isLoading: false,
+    isLoading,
   };
 }

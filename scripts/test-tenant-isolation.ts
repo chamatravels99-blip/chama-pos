@@ -6,6 +6,8 @@ import { Business } from "../models/Business";
 import { Branch } from "../models/Branch";
 import { User } from "../models/User";
 import { Product } from "../models/Product";
+import { Supplier } from "../models/Supplier";
+import { StockMovement } from "../models/StockMovement";
 import { AuditLog } from "../models/AuditLog";
 import {
   scopeToTenant,
@@ -31,6 +33,15 @@ import {
   findSaleCreatedAudit,
 } from "../lib/sales/sale-service";
 import { adjustStock } from "../lib/inventory/stock-service";
+import {
+  addMovementNames,
+  buildMovementReferenceQueries,
+  mapMovementNames,
+} from "../lib/inventory/movement-display";
+import { createProductWithOpeningStock, ProductCreationError } from "../lib/products/product-service";
+import { buildCurrentBusinessQuery, getCurrentBusiness } from "../lib/business/business-service";
+import { buildAuthorizedBranchQuery, listAuthorizedBranches } from "../lib/branches/branch-service";
+import { buildSalesQuery } from "../lib/sales/sale-service";
 
 // Load .env.local manually if running in standalone script
 function loadEnv() {
@@ -135,6 +146,321 @@ async function runIsolationTests() {
           businessName: bizPhone.name,
         };
 
+        const modzoneBusinessInfo = await getCurrentBusiness(modzoneContext);
+        const phoneBusinessInfo = await getCurrentBusiness(phoneContext);
+        assert(
+          modzoneBusinessInfo?._id.toString() === bizModzone._id.toString() &&
+            modzoneBusinessInfo.name === bizModzone.name &&
+            phoneBusinessInfo?._id.toString() === bizPhone._id.toString() &&
+            phoneBusinessInfo.name === bizPhone.name &&
+            phoneBusinessInfo.name !== modzoneBusinessInfo.name,
+          "Business Information test: Shop A and Shop B receive only their own business record"
+        );
+        passedCount++;
+
+        const modzoneBranches = await listAuthorizedBranches(modzoneContext);
+        const phoneBranches = await listAuthorizedBranches(phoneContext);
+        assert(
+          modzoneBranches.every((branch) => branch.businessId === bizModzone._id.toString()) &&
+            phoneBranches.every((branch) => branch.businessId === bizPhone._id.toString()) &&
+            !phoneBranches.some((branch) => modzoneBranches.some((own) => own._id.toString() === branch._id.toString())),
+          "Branches test: Shop A branches never appear in Shop B results"
+        );
+        passedCount++;
+
+        const isolationSupplier = await Supplier.create({
+          businessId: bizModzone._id.toString(),
+          companyName: `Tenant Isolation Supplier ${Date.now()}`,
+        });
+        try {
+          const phoneSupplierQuery = scopeToTenant(phoneContext, { _id: isolationSupplier._id });
+          const crossTenantSupplier = await Supplier.findOne(phoneSupplierQuery);
+          assert(
+            crossTenantSupplier === null,
+            "Supplier test: Business B cannot read a Chama Modzone supplier"
+          );
+          passedCount++;
+
+          const foreignUpdate = await Supplier.findOneAndUpdate(
+            phoneSupplierQuery,
+            { $set: { companyName: "Unauthorized change" } },
+            { new: true }
+          );
+          assert(foreignUpdate === null, "Supplier test: Business B cannot update a Chama Modzone supplier");
+          passedCount++;
+
+          const foreignDelete = await Supplier.findOneAndDelete(phoneSupplierQuery);
+          assert(foreignDelete === null, "Supplier test: Business B cannot delete a Chama Modzone supplier");
+          passedCount++;
+        } finally {
+          await Supplier.deleteOne({ _id: isolationSupplier._id, businessId: bizModzone._id.toString() });
+        }
+
+        const openingBranch = await Branch.findOne({
+          businessId: bizModzone._id.toString(),
+          code: "CMB-01",
+        });
+        const restrictedBranch = await Branch.findOne({
+          businessId: bizModzone._id.toString(),
+          code: "KDY-01",
+        });
+        assert(Boolean(openingBranch && restrictedBranch), "Opening stock test branches exist");
+        passedCount++;
+        const openingBranchContext: TenantContext = {
+          ...modzoneContext,
+          role: "MANAGER",
+          branchAccess: "SELECTED_BRANCHES",
+          branchIds: [openingBranch!._id.toString()],
+        };
+        const restrictedBranchResults = await listAuthorizedBranches(openingBranchContext);
+        assert(
+          restrictedBranchResults.length > 0 &&
+            restrictedBranchResults.every((branch) => branch._id.toString() === openingBranch!._id.toString()),
+          "Branches test: a restricted user receives only assigned branch documents"
+        );
+        passedCount++;
+
+        const createdOpeningProductIds: string[] = [];
+        const testSkuPrefix = `OPEN-${Date.now()}`;
+        try {
+          const spoofedOpeningInput = {
+            name: "Opening Stock Integration Test",
+            sku: `${testSkuPrefix}-POS`,
+            costPrice: 2,
+            sellingPrice: 4,
+            unit: "pcs",
+            status: "active" as const,
+            branchId: openingBranch!._id.toString(),
+            openingQuantity: 2.5,
+            lowStockThreshold: 3,
+            businessId: bizPhone._id.toString(),
+          };
+          const openingProduct = await createProductWithOpeningStock(modzoneContext, spoofedOpeningInput);
+          createdOpeningProductIds.push(openingProduct._id.toString());
+
+          assert(
+            openingProduct.businessId === bizModzone._id.toString(),
+            "Opening stock test: product businessId comes from session, not client input"
+          );
+          passedCount++;
+
+          const openingStock = openingProduct.stockByBranch?.find(
+            (stock) => stock.branchId === openingBranch!._id.toString()
+          );
+          assert(
+            openingStock?.quantity === 2.5 && openingStock.lowStockThreshold === 3,
+            "Opening stock test: fractional quantity and threshold are stored on the selected branch"
+          );
+          passedCount++;
+
+          const openingMovement = await StockMovement.findOne({
+            businessId: bizModzone._id.toString(),
+            branchId: openingBranch!._id.toString(),
+            productId: openingProduct._id.toString(),
+            type: "opening_stock",
+          }).lean();
+          assert(
+            openingMovement?.previousQuantity === 0 &&
+              openingMovement.quantityChange === 2.5 &&
+              openingMovement.newQuantity === 2.5 &&
+              openingMovement.userId === modzoneContext.userId,
+            "Opening stock test: opening movement records the session user and exact stock transition"
+          );
+          passedCount++;
+
+          const movementDisplayUser = await User.findOne({ businessId: bizModzone._id.toString() }).select("_id name").lean();
+          const foreignProduct = await Product.findOne({ businessId: bizPhone._id.toString() }).select("_id").lean();
+          const foreignBranch = await Branch.findOne({ businessId: bizPhone._id.toString() }).select("_id").lean();
+          const foreignUser = await User.findOne({ businessId: bizPhone._id.toString() }).select("_id").lean();
+          assert(Boolean(movementDisplayUser && foreignProduct && foreignBranch && foreignUser), "Movement display test references exist");
+          passedCount++;
+
+          const movementDisplayResults = await addMovementNames(modzoneContext, [
+            {
+              productId: openingProduct._id.toString(),
+              branchId: openingBranch!._id.toString(),
+              userId: movementDisplayUser!._id.toString(),
+            },
+            {
+              productId: foreignProduct!._id.toString(),
+              branchId: foreignBranch!._id.toString(),
+              userId: foreignUser!._id.toString(),
+            },
+            {
+              productId: new mongoose.Types.ObjectId().toString(),
+              branchId: new mongoose.Types.ObjectId().toString(),
+              userId: new mongoose.Types.ObjectId().toString(),
+            },
+          ]);
+          assert(
+            movementDisplayResults[0].productName === openingProduct.name,
+            "Movement display test resolves the tenant product name"
+          );
+          passedCount++;
+          const expectedBranchName = openingBranch!.name;
+          assert(
+            movementDisplayResults[0].branchName === expectedBranchName,
+            "Movement display test resolves the tenant branch name"
+          );
+          passedCount++;
+          assert(
+            movementDisplayResults[0].userName === movementDisplayUser!.name,
+            "Movement display test resolves the tenant user name"
+          );
+          passedCount++;
+          assert(
+            movementDisplayResults[1].productName === "Unknown Product" &&
+              movementDisplayResults[1].branchName === "Unknown Branch" &&
+              movementDisplayResults[1].userName === "Unknown User",
+            "Movement display test never exposes foreign tenant names"
+          );
+          passedCount++;
+          assert(
+            movementDisplayResults[2].productName === "Unknown Product" &&
+              movementDisplayResults[2].branchName === "Unknown Branch" &&
+              movementDisplayResults[2].userName === "Unknown User",
+            "Movement display test uses safe fallbacks for missing references"
+          );
+          passedCount++;
+
+          const foreignTenantProduct = await Product.findOne(
+            scopeToTenant(phoneContext, { _id: openingProduct._id })
+          );
+          const foreignTenantMovements = await StockMovement.find(
+            scopeToTenant(phoneContext, { productId: openingProduct._id.toString() })
+          ).lean();
+          assert(
+            foreignTenantProduct === null && foreignTenantMovements.length === 0,
+            "Opening stock test: another tenant cannot read the product or its opening movement"
+          );
+          passedCount++;
+
+          const zeroStockProduct = await createProductWithOpeningStock(modzoneContext, {
+            name: "Zero Opening Stock Integration Test",
+            sku: `${testSkuPrefix}-ZERO`,
+            costPrice: 2,
+            sellingPrice: 4,
+            unit: "pcs",
+            status: "active",
+            branchId: openingBranch!._id.toString(),
+            openingQuantity: 0,
+            lowStockThreshold: 5,
+          });
+          createdOpeningProductIds.push(zeroStockProduct._id.toString());
+          const zeroMovement = await StockMovement.findOne({
+            businessId: bizModzone._id.toString(),
+            productId: zeroStockProduct._id.toString(),
+            type: "opening_stock",
+          }).lean();
+          assert(
+            Boolean(zeroStockProduct.stockByBranch?.some((stock) => stock.branchId === openingBranch!._id.toString() && stock.quantity === 0)) &&
+              zeroMovement === null,
+            "Opening stock test: zero creates a branch stock row without a ledger movement"
+          );
+          passedCount++;
+
+          let negativeQuantityRejected = false;
+          try {
+            await createProductWithOpeningStock(modzoneContext, {
+              name: "Negative Opening Stock Integration Test",
+              sku: `${testSkuPrefix}-NEGATIVE`,
+              costPrice: 2,
+              sellingPrice: 4,
+              unit: "pcs",
+              status: "active",
+              branchId: openingBranch!._id.toString(),
+              openingQuantity: -1,
+              lowStockThreshold: 5,
+            });
+          } catch (error) {
+            negativeQuantityRejected = error instanceof ProductCreationError;
+          }
+          assert(negativeQuantityRejected, "Opening stock test: negative quantity is rejected");
+          passedCount++;
+
+          let infiniteQuantityRejected = false;
+          try {
+            await createProductWithOpeningStock(modzoneContext, {
+              name: "Infinite Opening Stock Integration Test",
+              sku: `${testSkuPrefix}-INFINITE`,
+              costPrice: 2,
+              sellingPrice: 4,
+              unit: "pcs",
+              status: "active",
+              branchId: openingBranch!._id.toString(),
+              openingQuantity: Number.POSITIVE_INFINITY,
+              lowStockThreshold: 5,
+            });
+          } catch (error) {
+            infiniteQuantityRejected = error instanceof ProductCreationError;
+          }
+          assert(infiniteQuantityRejected, "Opening stock test: infinite quantity is rejected");
+          passedCount++;
+
+          const rollbackSku = `${testSkuPrefix}-ROLLBACK`;
+          let transactionRollbackConfirmed = false;
+          try {
+            await createProductWithOpeningStock(
+              { ...modzoneContext, userId: "" },
+              {
+                name: "Opening Stock Rollback Integration Test",
+                sku: rollbackSku,
+                costPrice: 2,
+                sellingPrice: 4,
+                unit: "pcs",
+                status: "active",
+                branchId: openingBranch!._id.toString(),
+                openingQuantity: 1,
+                lowStockThreshold: 5,
+              }
+            );
+          } catch {
+            const rolledBackProduct = await Product.findOne({
+              businessId: bizModzone._id.toString(),
+              sku: rollbackSku,
+            });
+            transactionRollbackConfirmed = rolledBackProduct === null;
+          }
+          assert(
+            transactionRollbackConfirmed,
+            "Opening stock test: movement failure rolls back product creation"
+          );
+          passedCount++;
+
+          const restrictedContext: TenantContext = {
+            ...modzoneContext,
+            role: "MANAGER",
+            branchAccess: "SELECTED_BRANCHES",
+            branchIds: [openingBranch!._id.toString()],
+          };
+          let unauthorizedBranchRejected = false;
+          try {
+            await createProductWithOpeningStock(restrictedContext, {
+              name: "Unauthorized Branch Integration Test",
+              sku: `${testSkuPrefix}-BRANCH`,
+              costPrice: 2,
+              sellingPrice: 4,
+              unit: "pcs",
+              status: "active",
+              branchId: restrictedBranch!._id.toString(),
+              openingQuantity: 1,
+              lowStockThreshold: 5,
+            });
+          } catch (error) {
+            unauthorizedBranchRejected = error instanceof AuthorizationError;
+          }
+          assert(unauthorizedBranchRejected, "Opening stock test: user cannot select an unassigned branch");
+          passedCount++;
+        } finally {
+          if (createdOpeningProductIds.length > 0) {
+            await StockMovement.deleteMany({ productId: { $in: createdOpeningProductIds } });
+            await Product.deleteMany({
+              _id: { $in: createdOpeningProductIds },
+              businessId: bizModzone._id.toString(),
+            });
+          }
+        }
+
         // TEST 1: Chama Modzone user accesses ONLY Chama Modzone products
         const modzoneQuery = scopeToTenant(modzoneContext, { status: "active" });
         const modzoneProducts = await Product.find(modzoneQuery);
@@ -225,6 +551,112 @@ async function runIsolationTests() {
       securedQuery.businessId === "biz_victim_123",
       "Test 5: Client cannot override businessId (scopeToTenant enforces session businessId)",
       `Expected biz_victim_123, got ${securedQuery.businessId}`
+    );
+    passedCount++;
+
+    const movementTestContext: TenantContext = {
+      userId: "movement_user",
+      businessId: "business_a",
+      role: "MANAGER",
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: ["branch_a"],
+    };
+    const movementFixtures = [
+      { productId: "product_a", branchId: "branch_a", userId: "user_a" },
+      { productId: "product_missing", branchId: "branch_missing", userId: "user_missing" },
+    ];
+    const movementQueries = buildMovementReferenceQueries(movementTestContext, movementFixtures);
+    assert(
+      movementQueries.products.businessId === "business_a" &&
+        movementQueries.branches.businessId === "business_a" &&
+        movementQueries.users.businessId === "business_a",
+      "Movement names: all reference lookups are scoped to authenticated tenant"
+    );
+    passedCount++;
+    assert(
+      JSON.stringify(movementQueries.branches._id) === JSON.stringify({ $in: ["branch_a"] }),
+      "Movement names: branch lookup preserves assigned-branch restrictions"
+    );
+    passedCount++;
+    const displayRows = mapMovementNames(
+      movementFixtures,
+      [{ _id: { toString: () => "product_a" }, name: "Test Phone" }],
+      [{ _id: { toString: () => "branch_a" }, name: "Main Branch" }],
+      [{ _id: { toString: () => "user_a" }, name: "Chamod" }]
+    );
+    assert(
+      displayRows[0].productName === "Test Phone" &&
+        displayRows[0].branchName === "Main Branch" &&
+        displayRows[0].userName === "Chamod",
+      "Movement names: product, branch, and user names are displayed"
+    );
+    passedCount++;
+    assert(
+      displayRows[1].productName === "Unknown Product" &&
+        displayRows[1].branchName === "Unknown Branch" &&
+        displayRows[1].userName === "Unknown User",
+      "Movement names: missing or out-of-tenant references use safe fallbacks"
+    );
+    passedCount++;
+
+    const shopAContext: TenantContext = {
+      userId: "shop_a_owner",
+      businessId: "shop_a_id",
+      role: "BUSINESS_OWNER",
+      branchAccess: "ALL_BRANCHES",
+      branchIds: ["shop_a_branch_1", "shop_a_branch_2"],
+    };
+    const shopBContext: TenantContext = {
+      userId: "shop_b_owner",
+      businessId: "shop_b_id",
+      role: "BUSINESS_OWNER",
+      branchAccess: "ALL_BRANCHES",
+      branchIds: ["shop_b_branch_1"],
+    };
+    const shopABusinessQuery = buildCurrentBusinessQuery(shopAContext);
+    const shopBBusinessQuery = buildCurrentBusinessQuery(shopBContext);
+    assert(
+      shopABusinessQuery._id === "shop_a_id" && shopBBusinessQuery._id === "shop_b_id",
+      "Business Information: each shop query uses only its authenticated business ID"
+    );
+    passedCount++;
+    const shopABranchQuery = buildAuthorizedBranchQuery(shopAContext);
+    const shopBBranchQuery = buildAuthorizedBranchQuery(shopBContext);
+    assert(
+      shopABranchQuery.businessId === "shop_a_id" && shopBBranchQuery.businessId === "shop_b_id",
+      "Branches: each shop query is tenant scoped"
+    );
+    passedCount++;
+    const restrictedShopAContext: TenantContext = {
+      ...shopAContext,
+      role: "MANAGER",
+      branchAccess: "SELECTED_BRANCHES",
+      branchIds: ["shop_a_branch_1"],
+    };
+    const restrictedBranchQuery = buildAuthorizedBranchQuery(restrictedShopAContext);
+    assert(
+      JSON.stringify(restrictedBranchQuery._id) === JSON.stringify({ $in: ["shop_a_branch_1"] }),
+      "Branches: selected-branch users receive only assigned branch data"
+    );
+    passedCount++;
+    const shopASalesQuery = buildSalesQuery(shopAContext);
+    const shopBSalesQuery = buildSalesQuery(shopBContext);
+    const restrictedSalesQuery = buildSalesQuery(restrictedShopAContext);
+    assert(
+      shopASalesQuery.businessId === "shop_a_id" && shopBSalesQuery.businessId === "shop_b_id" &&
+        JSON.stringify(restrictedSalesQuery.branchId) === JSON.stringify({ $in: ["shop_a_branch_1"] }),
+      "Recent Sales: queries enforce tenant and selected-branch scope"
+    );
+    passedCount++;
+    let unscopedPlatformSalesRejected = false;
+    try {
+      buildSalesQuery({ ...shopAContext, role: "PLATFORM_ADMIN", businessId: null });
+    } catch (error) {
+      unscopedPlatformSalesRejected = error instanceof TenantSecurityError;
+    }
+    assert(
+      unscopedPlatformSalesRejected,
+      "Recent Sales: platform sessions without a business cannot run cross-tenant queries"
     );
     passedCount++;
 
@@ -705,6 +1137,17 @@ async function runIsolationTests() {
       );
       passedCount++;
 
+      const speakerColomboStock = seededSpeaker!.stockByBranch?.find(
+        (entry) => entry.branchId === seededBranchColombo!._id.toString()
+      );
+      if (!speakerColomboStock) {
+        seededSpeaker!.stockByBranch = [
+          ...(seededSpeaker!.stockByBranch || []),
+          { branchId: seededBranchColombo!._id.toString(), quantity: 2, lowStockThreshold: 5 },
+        ];
+        await seededSpeaker!.save();
+      }
+
       const colomboCashierCtx: TenantContext = {
         userId: cashierColombo!._id.toString(),
         businessId: bizModzone!._id.toString(),
@@ -858,6 +1301,22 @@ async function runIsolationTests() {
       assert(
         crossTenantGetDenied === true && leaked === false,
         "Test A: Sale from Business A cannot be accessed by Business B"
+      );
+      passedCount++;
+
+      const colomboOnlySalesContext: TenantContext = {
+        ...colomboCashierCtx,
+        userId: "modzone_colombo_manager",
+        role: "MANAGER",
+        branchAccess: "SELECTED_BRANCHES",
+        branchIds: [branchColombo!._id.toString()],
+        permissions: [...DEFAULT_ROLE_PERMISSIONS.BUSINESS_OWNER, "SALE_VIEW_OTHER_CASHIERS"],
+      };
+      const colomboOnlySales = await listSales(colomboOnlySalesContext, {});
+      assert(
+        colomboOnlySales.sales.some((sale) => sale._id.toString() === createdSale._id.toString()) &&
+          colomboOnlySales.sales.every((sale) => sale.branchId === branchColombo!._id.toString()),
+        "Recent Sales test: branch-restricted user sees Branch A sales but no Branch B sales"
       );
       passedCount++;
 

@@ -29,13 +29,16 @@ interface MovementRow {
   _id: string;
   businessId: string;
   branchId: string;
+  branchName: string;
   productId: string;
+  productName: string;
   variantId?: string;
   type: string;
   quantityChange: number;
   previousQuantity: number;
   newQuantity: number;
   userId: string;
+  userName: string;
   notes?: string;
   createdAt: string;
 }
@@ -46,6 +49,13 @@ interface ProductOption {
   barcode?: string;
   variants?: Array<{ _id?: string; name: string; sku: string; barcode?: string; stockByBranch?: Array<{ branchId: string; quantity: number; lowStockThreshold?: number }> }>;
   stockByBranch?: Array<{ branchId: string; quantity: number; lowStockThreshold?: number }>;
+}
+
+function hasBranchStock(
+  stockByBranch: Array<{ branchId: string; quantity: number }> | undefined,
+  branchId: string
+) {
+  return Boolean(branchId && stockByBranch?.some((stock) => stock.branchId === branchId));
 }
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -160,11 +170,17 @@ export default function InventoryPage() {
   }, [rows]);
 
   const productOptions = useMemo(() => {
-    return products.filter((product) => product.name || product.sku);
-  }, [products]);
+    return products.filter((product) =>
+      hasBranchStock(product.stockByBranch, form.branchId) ||
+      product.variants?.some((variant) => hasBranchStock(variant.stockByBranch, form.branchId))
+    );
+  }, [products, form.branchId]);
 
   const selectedProduct = productOptions.find((product) => product._id === form.productId) || null;
-  const variantOptions = (selectedProduct?.variants || []).filter((variant) => variant && variant.name);
+  const hasBaseProductStock = hasBranchStock(selectedProduct?.stockByBranch, form.branchId);
+  const variantOptions = (selectedProduct?.variants || []).filter((variant) =>
+    variant && variant.name && hasBranchStock(variant.stockByBranch, form.branchId)
+  );
 
   useEffect(() => {
     if (!showReceiveModal && !showAdjustModal) {
@@ -243,7 +259,7 @@ export default function InventoryPage() {
             ))}
           </select>
           {canAdjust && (
-            <Button variant="outline" size="sm" onClick={() => { setShowAdjustModal(true); setForm((prev) => ({ ...prev, branchId: prev.branchId || branches[0]?._id || "" })); }}>
+              <Button variant="outline" size="sm" onClick={() => { setShowAdjustModal(true); setForm((prev) => ({ ...prev, type: "increase", branchId: prev.branchId || branches[0]?._id || "" })); }}>
               <Plus className="h-3.5 w-3.5 mr-1.5" />
               Adjust Stock
             </Button>
@@ -378,13 +394,13 @@ export default function InventoryPage() {
               ) : movements.map((movement) => (
                 <tr key={movement._id} className="border-b border-slate-100">
                   <td className="py-3 pr-4 text-slate-600">{new Date(movement.createdAt).toLocaleString()}</td>
-                  <td className="py-3 pr-4 text-slate-700">{movement.productId}</td>
-                  <td className="py-3 pr-4 text-slate-600">{movement.branchId}</td>
+                  <td className="py-3 pr-4 text-slate-700">{movement.productName || "Unknown Product"}</td>
+                  <td className="py-3 pr-4 text-slate-600">{movement.branchName || "Unknown Branch"}</td>
                   <td className="py-3 pr-4"><Badge variant={movement.type === "sale" ? "secondary" : "success"} size="sm">{movement.type}</Badge></td>
                   <td className={`py-3 pr-4 font-medium ${movement.quantityChange >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{movement.quantityChange > 0 ? "+" : ""}{movement.quantityChange}</td>
                   <td className="py-3 pr-4 text-slate-600">{movement.previousQuantity}</td>
                   <td className="py-3 pr-4 text-slate-600">{movement.newQuantity}</td>
-                  <td className="py-3 pr-4 text-slate-600">{movement.userId}</td>
+                  <td className="py-3 pr-4 text-slate-600">{movement.userName || "Unknown User"}</td>
                   <td className="py-3 pr-4 text-slate-600">{movement.notes || "—"}</td>
                 </tr>
               ))}
@@ -401,22 +417,27 @@ export default function InventoryPage() {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Branch</label>
-                <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value, productId: "", variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   {branches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Product</label>
-                <select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value, variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={form.productId} onChange={(e) => {
+                  const product = productOptions.find((item) => item._id === e.target.value);
+                  const initialVariant = product?.variants?.find((variant) => hasBranchStock(variant.stockByBranch, form.branchId));
+                  setForm((previous) => ({ ...previous, productId: e.target.value, variantId: initialVariant?._id || "" }));
+                }} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   <option value="">Select a product</option>
                   {productOptions.map((product) => <option key={product._id} value={product._id}>{product.name} ({product.sku})</option>)}
                 </select>
+                {productOptions.length === 0 && <p className="mt-1 text-xs text-slate-500">No products have a stock record at this branch. Missing branch stock records are not created automatically.</p>}
               </div>
-              {variantOptions.length > 0 && (
+              {(variantOptions.length > 0 || (selectedProduct?.variants?.length ?? 0) > 0) && (
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-slate-600">Variant</label>
                   <select value={form.variantId} onChange={(e) => setForm({ ...form, variantId: e.target.value })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                    <option value="">Base product</option>
+                    {hasBaseProductStock && <option value="">Base product</option>}
                     {variantOptions.map((variant) => <option key={variant._id} value={variant._id}>{variant.name}</option>)}
                   </select>
                 </div>
@@ -446,22 +467,27 @@ export default function InventoryPage() {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Branch</label>
-                <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value, productId: "", variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   {branches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-slate-600">Product</label>
-                <select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value, variantId: "" })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={form.productId} onChange={(e) => {
+                  const product = productOptions.find((item) => item._id === e.target.value);
+                  const initialVariant = product?.variants?.find((variant) => hasBranchStock(variant.stockByBranch, form.branchId));
+                  setForm((previous) => ({ ...previous, productId: e.target.value, variantId: initialVariant?._id || "" }));
+                }} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   <option value="">Select a product</option>
                   {productOptions.map((product) => <option key={product._id} value={product._id}>{product.name} ({product.sku})</option>)}
                 </select>
+                {productOptions.length === 0 && <p className="mt-1 text-xs text-slate-500">No products have a stock record at this branch. Missing branch stock records are not created automatically.</p>}
               </div>
-              {variantOptions.length > 0 && (
+              {(variantOptions.length > 0 || (selectedProduct?.variants?.length ?? 0) > 0) && (
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-slate-600">Variant</label>
                   <select value={form.variantId} onChange={(e) => setForm({ ...form, variantId: e.target.value })} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                    <option value="">Base product</option>
+                    {hasBaseProductStock && <option value="">Base product</option>}
                     {variantOptions.map((variant) => <option key={variant._id} value={variant._id}>{variant.name}</option>)}
                   </select>
                 </div>

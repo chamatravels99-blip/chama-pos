@@ -13,7 +13,6 @@ import {
   assertBranchAccess,
   hasPermission,
   AuthorizationError,
-  isPlatformRole,
 } from "@/lib/auth/session";
 import {
   TenantContext,
@@ -128,6 +127,18 @@ export interface ListSalesQuery {
   search?: string;
   dateFrom?: string;
   dateTo?: string;
+}
+
+export function buildSalesQuery(
+  context: TenantContext,
+  branchId?: string,
+  additionalFilters: Record<string, unknown> = {}
+) {
+  const requestedBranch = branchId && branchId !== "ALL" ? branchId : undefined;
+  if (requestedBranch) {
+    assertBranchAccess(context, requestedBranch);
+  }
+  return scopeToBranch(context, requestedBranch || branchId, additionalFilters);
 }
 
 function parseQuantity(value: unknown): number {
@@ -439,30 +450,14 @@ function escapeRegex(value: string): string {
 export async function listSales(context: TenantContext, query: ListSalesQuery = {}) {
   requireSalePermission(context, "SALE_VIEW");
 
-  const isPlatform = isPlatformRole(context.role);
-  if (!isPlatform) {
-    assertTenantContext(context);
-  }
+  assertTenantContext(context);
 
   await connectToDatabase();
 
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 50));
 
-  let filter: Record<string, unknown> = {};
-
-  if (isPlatform) {
-    if (query.branchId && query.branchId !== "ALL") {
-      filter.branchId = query.branchId;
-    }
-  } else {
-    const requestedBranch =
-      query.branchId && query.branchId !== "ALL" ? query.branchId : undefined;
-    if (requestedBranch) {
-      assertBranchAccess(context, requestedBranch);
-    }
-    filter = scopeToBranch(context, requestedBranch || query.branchId, filter);
-  }
+  const filter = buildSalesQuery(context, query.branchId);
 
   const canViewOtherCashiers = hasPermission(context, "SALE_VIEW_OTHER_CASHIERS");
   if (!canViewOtherCashiers) {
@@ -523,17 +518,11 @@ export async function getSaleById(context: TenantContext, saleId: string) {
     throw new SaleValidationError("Sale not found.", 404);
   }
 
-  const isPlatform = isPlatformRole(context.role);
-  if (!isPlatform) {
-    assertTenantContext(context);
-  }
+  assertTenantContext(context);
 
   await connectToDatabase();
 
-  const filter: Record<string, unknown> = { _id: saleId };
-  if (!isPlatform) {
-    Object.assign(filter, scopeToTenant(context, {}));
-  }
+  const filter: Record<string, unknown> = { _id: saleId, ...scopeToTenant(context, {}) };
 
   const sale = await Sale.findOne(filter).lean();
   if (!sale) {

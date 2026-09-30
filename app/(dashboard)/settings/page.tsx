@@ -3,9 +3,17 @@ import { Settings, Building, Store, CreditCard, Shield, Sliders } from "lucide-r
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { mockCurrentBusiness, mockBranches } from "@/services/mock-data";
+import { getTenantContext } from "@/lib/auth/session";
+import { getCurrentBusiness } from "@/lib/business/business-service";
+import { listAuthorizedBranches } from "@/lib/branches/branch-service";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const tenantContext = await getTenantContext();
+  const [business, branches] = await Promise.all([
+    getCurrentBusiness(tenantContext),
+    listAuthorizedBranches(tenantContext),
+  ]);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -26,34 +34,34 @@ export default function SettingsPage() {
                 Tenant organization attributes and primary contact details.
               </CardDescription>
             </CardHeader>
-            <div className="pt-4 space-y-3 text-xs">
+            {business ? <div className="pt-4 space-y-3 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <span className="text-slate-400 block mb-1 font-medium">Business Name</span>
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 font-semibold text-slate-800">
-                    {mockCurrentBusiness.name}
+                    {business.name}
                   </div>
                 </div>
                 <div>
                   <span className="text-slate-400 block mb-1 font-medium">Tenant Slug (Identifier)</span>
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 font-mono text-slate-800">
-                    {mockCurrentBusiness.slug}
+                    {business.slug}
                   </div>
                 </div>
                 <div>
                   <span className="text-slate-400 block mb-1 font-medium">Industry Classification</span>
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 capitalize text-slate-800">
-                    {(mockCurrentBusiness.industry || mockCurrentBusiness.businessType).replace("_", " ")}
+                    {(business.industry || business.businessType || "Not configured").replace("_", " ")}
                   </div>
                 </div>
                 <div>
                   <span className="text-slate-400 block mb-1 font-medium">Primary Contact</span>
                   <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-800">
-                    {mockCurrentBusiness.email}
+                    {business.email || "Not configured"}
                   </div>
                 </div>
               </div>
-            </div>
+            </div> : <div className="pt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No business record is associated with the authenticated account.</div>}
           </Card>
 
           {/* Branches Configuration */}
@@ -62,7 +70,7 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Building className="h-4 w-4 text-brand-600" />
-                  <CardTitle>Configured Branches ({mockBranches.length})</CardTitle>
+                  <CardTitle>Configured Branches ({branches.length})</CardTitle>
                 </div>
                 <Badge variant="default" size="sm">Multi-Branch Enabled</Badge>
               </div>
@@ -71,8 +79,8 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <div className="pt-4 divide-y divide-slate-100">
-              {mockBranches.map((br) => (
-                <div key={br._id} className="py-3 flex items-center justify-between">
+              {branches.map((br) => (
+                <div key={br._id.toString()} className="py-3 flex items-center justify-between">
                   <div>
                     <div className="font-semibold text-slate-900 text-xs flex items-center gap-2">
                       {br.name}
@@ -87,6 +95,7 @@ export default function SettingsPage() {
                   <Badge variant="outline" size="sm">Active</Badge>
                 </div>
               ))}
+              {branches.length === 0 && <p className="py-4 text-xs text-slate-500">No authorized branches are configured for this business.</p>}
             </div>
           </Card>
         </div>
@@ -100,22 +109,14 @@ export default function SettingsPage() {
                   <CreditCard className="h-4 w-4 text-brand-600" />
                   <CardTitle className="text-sm">Subscription Plan</CardTitle>
                 </div>
-                <Badge variant="success" size="sm">ACTIVE</Badge>
+                <Badge variant="success" size="sm">{business?.subscriptionStatus || "UNKNOWN"}</Badge>
               </div>
               <CardDescription>Commercial SaaS subscription status.</CardDescription>
             </CardHeader>
             <div className="pt-4 space-y-3 text-xs">
               <div className="flex justify-between items-center py-1 border-b border-slate-100">
                 <span className="text-slate-500">Plan Tier</span>
-                <span className="font-bold text-slate-900">BUSINESS</span>
-              </div>
-              <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                <span className="text-slate-500">Billing Cycle</span>
-                <span className="text-slate-800">$79.00 / month</span>
-              </div>
-              <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                <span className="text-slate-500">Max Allowed Branches</span>
-                <span className="font-semibold text-slate-800">3 Branches</span>
+                <span className="font-bold text-slate-900">{business?.subscriptionTier || "Not configured"}</span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-slate-500">Multi-Tenancy Guard</span>

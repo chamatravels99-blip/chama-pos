@@ -131,6 +131,7 @@ export async function adjustStock(
   }
 
   const allowedMovementTypes: StockMovementType[] = [
+    "opening_stock",
     "purchase_received",
     "sale",
     "sale_return",

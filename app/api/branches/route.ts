@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
-import { connectToDatabase } from "@/lib/db/connection";
-import { Branch } from "@/models/Branch";
+import { NextResponse } from "next/server";
 import { getTenantContext, AuthorizationError, AuthenticationError } from "@/lib/auth/session";
-import { scopeToTenant } from "@/lib/db/tenant-context";
+import { TenantSecurityError } from "@/lib/db/tenant-context";
+import { listAuthorizedBranches } from "@/lib/branches/branch-service";
 
 export const dynamic = "force-dynamic";
 
@@ -10,29 +9,10 @@ export const dynamic = "force-dynamic";
  * GET /api/branches
  * Retrieves active branches scoped strictly to the authenticated tenant.
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const tenantContext = await getTenantContext();
-    await connectToDatabase();
-
-    const isPlatformAdmin =
-      tenantContext.role === "PLATFORM_OWNER" ||
-      tenantContext.role === "PLATFORM_ADMIN" ||
-      tenantContext.role === "SUPER_ADMIN";
-
-    let query: Record<string, unknown> = { status: "active" };
-
-    if (isPlatformAdmin) {
-      const searchParams = request.nextUrl.searchParams;
-      const targetBusinessId = searchParams.get("businessId");
-      if (targetBusinessId) {
-        query.businessId = targetBusinessId;
-      }
-    } else {
-      query = scopeToTenant(tenantContext, query);
-    }
-
-    const branches = await Branch.find(query).sort({ isMain: -1, name: 1 }).lean();
+    const branches = await listAuthorizedBranches(tenantContext);
 
     return NextResponse.json({
       success: true,
@@ -42,7 +22,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
     }
-    if (error instanceof AuthorizationError) {
+    if (error instanceof AuthorizationError || error instanceof TenantSecurityError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
 

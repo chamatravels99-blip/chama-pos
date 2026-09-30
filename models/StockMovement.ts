@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
 export type StockMovementType =
+  | "opening_stock"
   | "purchase_received"
   | "sale"
   | "sale_return"
@@ -28,6 +29,7 @@ export interface StockMovementDocument
 }
 
 const STOCK_MOVEMENT_TYPES: StockMovementType[] = [
+  "opening_stock",
   "purchase_received",
   "sale",
   "sale_return",

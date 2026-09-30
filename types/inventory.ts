@@ -1,4 +1,5 @@
 export type StockMovementType =
+  | "opening_stock"
   | "purchase_received"
   | "sale"
   | "sale_return"
