@@ -6,10 +6,12 @@ import {
   getEffectiveTenantContext,
   requireBranchAccess,
   requirePermission,
+  hasPermission,
 } from "@/lib/auth/session";
 import { TenantSecurityError } from "@/lib/db/tenant-context";
 import { getCurrentBusiness } from "@/lib/business/business-service";
 import { Branch } from "@/models/Branch";
+import { Customer } from "@/models/Customer";
 import { getSaleById, SaleValidationError } from "@/lib/sales/sale-service";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +47,28 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "Only completed sales can be printed." }, { status: 409 });
     }
 
-    return NextResponse.json({ success: true, sale, business, branch, format });
+    const customer = sale.customerId && hasPermission(tenantContext, "CUSTOMER_VIEW")
+      ? await Customer.findOne({
+          _id: sale.customerId,
+          businessId: tenantContext.businessId,
+        }).select("name phone email address").lean()
+      : null;
+
+    return NextResponse.json({
+      success: true,
+      sale: {
+        ...sale,
+        customer: customer ? {
+          name: customer.name,
+          phone: customer.phone,
+          email: customer.email,
+          address: customer.address,
+        } : undefined,
+      },
+      business,
+      branch,
+      format,
+    });
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });

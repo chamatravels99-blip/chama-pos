@@ -47,7 +47,10 @@ export function A4Invoice({
       <section className="invoice-parties">
         <div className="invoice-party">
           <h3>Bill To</h3>
-          <p className="invoice-party-name">{sale.customerName || "Walk-in Customer"}</p>
+          <p className="invoice-party-name">{sale.customer?.name || sale.customerName || "Walk-in Customer"}</p>
+          {sale.customer?.phone && <p>{sale.customer.phone}</p>}
+          {sale.customer?.email && <p>{sale.customer.email}</p>}
+          {sale.customer?.address && <p>{sale.customer.address}</p>}
         </div>
         <div className="invoice-details">
           <h3>Invoice Details</h3>

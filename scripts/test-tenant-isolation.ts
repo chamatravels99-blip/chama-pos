@@ -1525,6 +1525,199 @@ async function runIsolationTests() {
       );
       passedCount++;
 
+      assert(!createdSale.customerId && !createdSale.customerName, "Customer sales: walk-in sale remains valid without a customer");
+      passedCount++;
+
+      const saleCustomerA = await createCustomer(colomboCashierCtx, {
+        name: `Sale Customer A ${Date.now()}`,
+        phone: "0771000001",
+      });
+      const saleCustomerB = await createCustomer(phoneOwnerCtx, {
+        name: `Sale Customer B ${Date.now()}`,
+        phone: "0771000002",
+      });
+      const customerSaleIds: string[] = [];
+      const stockAdjustmentReferences: string[] = [new mongoose.Types.ObjectId().toString()];
+      let customerSaleRestock = false;
+      try {
+        const restockSession = await mongoose.startSession();
+        try {
+          await restockSession.withTransaction(async () => {
+            await adjustStock({
+              businessId: bizModzone!._id.toString(),
+              branchId: branchColombo!._id.toString(),
+              productId: speaker!._id.toString(),
+              quantityChange: 2,
+              type: "adjustment",
+              userId: cashierColombo!._id.toString(),
+              referenceId: stockAdjustmentReferences[0],
+              notes: "Customer sale isolation fixture",
+            }, restockSession);
+          });
+          customerSaleRestock = true;
+        } finally {
+          await restockSession.endSession();
+        }
+
+        const crossTenantCustomerCases = [
+          {
+            context: colomboCashierCtx,
+            cashier: { userId: cashierColombo!._id.toString(), name: cashierColombo!.name },
+            branchId: branchColombo!._id.toString(),
+            productId: speaker!._id.toString(),
+            price: expectedUnitPrice,
+            customerId: saleCustomerB._id,
+            label: "Business A cannot attach Business B customer to a sale",
+          },
+          {
+            context: phoneOwnerCtx,
+            cashier: { userId: phoneOwner!._id.toString(), name: phoneOwner!.name },
+            branchId: branchPhone!._id.toString(),
+            productId: phoneCase!._id.toString(),
+            price: Number(phoneCase!.sellingPrice || phoneCase!.price),
+            customerId: saleCustomerA._id,
+            label: "Business B cannot attach Business A customer to a sale",
+          },
+        ];
+        for (const testCase of crossTenantCustomerCases) {
+          let rejected = false;
+          try {
+            await createSale(testCase.context, testCase.cashier, {
+              branchId: testCase.branchId,
+              items: [{ productId: testCase.productId, quantity: 1 }],
+              paymentMethod: "cash",
+              paidAmount: testCase.price,
+              customerId: testCase.customerId,
+            });
+          } catch (error) {
+            rejected = error instanceof SaleValidationError;
+          }
+          assert(rejected, `Customer sales: ${testCase.label}`);
+          passedCount++;
+        }
+
+        const restockedSpeaker = await Product.findById(speaker!._id).lean();
+        const restockedQuantity = Number(restockedSpeaker?.stockByBranch?.find(
+          (stock) => stock.branchId === branchColombo!._id.toString()
+        )?.quantity || 0);
+        const saleWithCustomer = await createSale(
+          colomboCashierCtx,
+          { userId: cashierColombo!._id.toString(), name: cashierColombo!.name },
+          {
+            businessId: bizPhone!._id.toString(),
+            branchId: branchColombo!._id.toString(),
+            items: [{ productId: speaker!._id.toString(), quantity: 1 }],
+            paymentMethod: "cash",
+            paidAmount: expectedUnitPrice,
+            customerId: saleCustomerA._id,
+            customerName: "Forged Customer Name",
+          }
+        );
+        customerSaleIds.push(saleWithCustomer._id.toString());
+        assert(
+          saleWithCustomer.businessId === bizModzone!._id.toString() &&
+            saleWithCustomer.customerId === saleCustomerA._id &&
+            saleWithCustomer.customerName === saleCustomerA.name,
+          "Customer sales: sale stores the selected same-tenant customer, not client business/name values"
+        );
+        passedCount++;
+
+        const deductedSpeaker = await Product.findById(speaker!._id).lean();
+        const deductedQuantity = Number(deductedSpeaker?.stockByBranch?.find(
+          (stock) => stock.branchId === branchColombo!._id.toString()
+        )?.quantity || 0);
+        const saleMovement = await StockMovement.findOne({
+          businessId: bizModzone!._id.toString(),
+          referenceId: saleWithCustomer._id.toString(),
+          type: "sale",
+        }).lean();
+        assert(
+          deductedQuantity === restockedQuantity - 1 &&
+            saleMovement?.quantityChange === -1 &&
+            saleMovement.newQuantity === deductedQuantity,
+          "Customer sales: customer assignment preserves transactional stock deduction and sale movement"
+        );
+        passedCount++;
+
+        const ownerCustomerSales = await listSales(colomboCashierCtx, { customerId: saleCustomerA._id });
+        const foreignCustomerSales = await listSales(phoneOwnerCtx, { customerId: saleCustomerA._id });
+        assert(
+          ownerCustomerSales.sales.some((sale) => sale._id.toString() === saleWithCustomer._id.toString()) &&
+            ownerCustomerSales.sales.every((sale) => sale.customerId === saleCustomerA._id) &&
+            foreignCustomerSales.sales.length === 0,
+          "Customer purchase history: results stay scoped to the selected customer and business"
+        );
+        passedCount++;
+
+        const platformBusinessACtx: TenantContext = {
+          ...colomboCashierCtx,
+          role: "PLATFORM_ADMIN",
+          branchAccess: "ALL_BRANCHES",
+          activeBranchId: "ALL",
+        };
+        const platformBusinessBCtx: TenantContext = {
+          ...phoneOwnerCtx,
+          role: "PLATFORM_ADMIN",
+          branchAccess: "ALL_BRANCHES",
+          activeBranchId: "ALL",
+        };
+        const selectedBusinessASales = await listSales(platformBusinessACtx, { customerId: saleCustomerA._id });
+        const selectedBusinessBSales = await listSales(platformBusinessBCtx, { customerId: saleCustomerA._id });
+        assert(
+          selectedBusinessASales.sales.some((sale) => sale._id.toString() === saleWithCustomer._id.toString()) &&
+            selectedBusinessBSales.sales.length === 0,
+          "Customer purchase history: platform results follow only the selected business context"
+        );
+        passedCount++;
+
+        await deactivateCustomer(colomboCashierCtx, saleCustomerA._id);
+        let inactiveCustomerRejected = false;
+        try {
+          await createSale(colomboCashierCtx, {
+            userId: cashierColombo!._id.toString(),
+            name: cashierColombo!.name,
+          }, {
+            branchId: branchColombo!._id.toString(),
+            items: [{ productId: speaker!._id.toString(), quantity: 1 }],
+            paymentMethod: "cash",
+            paidAmount: expectedUnitPrice,
+            customerId: saleCustomerA._id,
+          });
+        } catch (error) {
+          inactiveCustomerRejected = error instanceof SaleValidationError && error.message.includes("inactive");
+        }
+        assert(inactiveCustomerRejected, "Customer sales: inactive customer cannot be attached to a new sale");
+        passedCount++;
+      } finally {
+        if (customerSaleRestock) {
+          const restoreReference = new mongoose.Types.ObjectId().toString();
+          stockAdjustmentReferences.push(restoreReference);
+          const restoreSession = await mongoose.startSession();
+          try {
+            await restoreSession.withTransaction(async () => {
+              await adjustStock({
+                businessId: bizModzone!._id.toString(),
+                branchId: branchColombo!._id.toString(),
+                productId: speaker!._id.toString(),
+                quantityChange: customerSaleIds.length > 0 ? -1 : -2,
+                type: "adjustment",
+                userId: cashierColombo!._id.toString(),
+                referenceId: restoreReference,
+                notes: "Restore customer sale isolation fixture stock",
+              }, restoreSession);
+            });
+          } finally {
+            await restoreSession.endSession();
+          }
+        }
+        if (customerSaleIds.length > 0) {
+          await Sale.deleteMany({ _id: { $in: customerSaleIds }, businessId: bizModzone!._id.toString() });
+          await StockMovement.deleteMany({ referenceId: { $in: customerSaleIds } });
+        }
+        await StockMovement.deleteMany({ referenceId: { $in: stockAdjustmentReferences } });
+        await Customer.deleteMany({ _id: { $in: [saleCustomerA._id, saleCustomerB._id] } });
+      }
+
       let otherBranchDenied = false;
       try {
         await createSale(

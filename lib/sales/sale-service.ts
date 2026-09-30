@@ -6,6 +6,7 @@ import { Product } from "@/models/Product";
 import { Branch } from "@/models/Branch";
 import { Business } from "@/models/Business";
 import { AuditLog } from "@/models/AuditLog";
+import { Customer } from "@/models/Customer";
 import { deductStock } from "@/lib/inventory/stock-service";
 import { logAuditEvent } from "@/lib/db/audit";
 import { scopeToTenant, scopeToBranch, assertTenantContext } from "@/lib/db/tenant-context";
@@ -125,6 +126,7 @@ export interface ListSalesQuery {
   page?: number;
   limit?: number;
   search?: string;
+  customerId?: string;
   dateFrom?: string;
   dateTo?: string;
 }
@@ -200,7 +202,30 @@ export async function createSale(
     false
   );
 
+  const requestedCustomerId =
+    typeof clientBody.customerId === "string" && clientBody.customerId.trim()
+      ? clientBody.customerId.trim()
+      : undefined;
+  if (clientBody.customerId !== undefined && clientBody.customerId !== null && typeof clientBody.customerId !== "string") {
+    throw new SaleValidationError("Customer selection is invalid.");
+  }
+  if (requestedCustomerId && !mongoose.Types.ObjectId.isValid(requestedCustomerId)) {
+    throw new SaleValidationError("Selected customer is invalid or unavailable.");
+  }
+  if (requestedCustomerId) requireSalePermission(context, "CUSTOMER_VIEW");
+
   await connectToDatabase();
+
+  const selectedCustomer = requestedCustomerId
+    ? await Customer.findOne({
+        _id: requestedCustomerId,
+        businessId: actor.businessId,
+        isActive: true,
+      }).select("_id name").lean()
+    : null;
+  if (requestedCustomerId && !selectedCustomer) {
+    throw new SaleValidationError("Selected customer is inactive or does not belong to this business.");
+  }
 
   const branch = await Branch.findOne({
     _id: branchId,
@@ -318,14 +343,7 @@ export async function createSale(
   const changeAmount =
     paymentMethod === "cash" ? money(Math.max(0, paidAmount - grandTotal)) : 0;
 
-  const customerName =
-    typeof clientBody.customerName === "string" && clientBody.customerName.trim()
-      ? clientBody.customerName.trim()
-      : undefined;
-  const customerId =
-    typeof clientBody.customerId === "string" && clientBody.customerId.trim()
-      ? clientBody.customerId.trim()
-      : undefined;
+  const customerId = selectedCustomer?._id.toString();
   const notes =
     typeof clientBody.notes === "string" && clientBody.notes.trim()
       ? clientBody.notes.trim()
@@ -337,6 +355,17 @@ const mongoSession = await mongoose.startSession();
 
 try {
   const transactionResult = await mongoSession.withTransaction(async () => {
+    const transactionCustomer = requestedCustomerId
+      ? await Customer.findOne({
+          _id: requestedCustomerId,
+          businessId: actor.businessId,
+          isActive: true,
+        }).select("_id name").session(mongoSession).lean()
+      : null;
+    if (requestedCustomerId && !transactionCustomer) {
+      throw new SaleValidationError("Selected customer is inactive or does not belong to this business.");
+    }
+
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const invoiceNumber = generateInvoiceNumber();
@@ -350,7 +379,7 @@ try {
               cashierUserId: actor.cashierUserId,
               cashierName: actor.cashierName,
               customerId,
-              customerName,
+              customerName: transactionCustomer?.name,
               items: itemsWithOrderDiscount,
               subtotal: itemsSubtotal,
               discountTotal,
@@ -475,6 +504,13 @@ export async function listSales(context: TenantContext, query: ListSalesQuery = 
     ];
   }
 
+  if (query.customerId) {
+    if (!mongoose.Types.ObjectId.isValid(query.customerId)) {
+      throw new SaleValidationError("Customer not found.", 404);
+    }
+    filter.customerId = query.customerId;
+  }
+
   if (query.dateFrom || query.dateTo) {
     const createdAt: Record<string, Date> = {};
     if (query.dateFrom) {
@@ -500,8 +536,21 @@ export async function listSales(context: TenantContext, query: ListSalesQuery = 
     Sale.countDocuments(filter),
   ]);
 
+  const customerIds = Array.from(new Set(sales.flatMap((sale) => sale.customerId ? [sale.customerId] : [])));
+  const customers = customerIds.length > 0 && hasPermission(context, "CUSTOMER_VIEW")
+    ? await Customer.find({
+        _id: { $in: customerIds },
+        ...scopeToTenant(context, {}),
+      }).select("_id phone").lean()
+    : [];
+  const customerPhoneById = new Map(customers.map((customer) => [customer._id.toString(), customer.phone]));
+  const salesWithCustomerPhone = sales.map((sale) => ({
+    ...sale,
+    customerPhone: sale.customerId ? customerPhoneById.get(sale.customerId) : undefined,
+  }));
+
   return {
-    sales,
+    sales: salesWithCustomerPhone,
     pagination: {
       page,
       limit,

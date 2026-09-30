@@ -11,6 +11,12 @@ export interface PrintSaleData {
   invoiceNumber: string;
   cashierName: string;
   customerName?: string;
+  customer?: {
+    name: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+  };
   items: Array<{
     name: string;
     sku?: string;

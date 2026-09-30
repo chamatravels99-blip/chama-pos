@@ -38,6 +38,13 @@ export function ThermalReceipt({
         <div><span>Cashier</span><strong>{sale.cashierName}</strong></div>
       </section>
 
+      {sale.customer && (
+        <section className="thermal-meta">
+          <div><span>Customer</span><strong>{sale.customer.name}</strong></div>
+          {sale.customer.phone && <div><span>Phone</span><strong>{sale.customer.phone}</strong></div>}
+        </section>
+      )}
+
       <section className="thermal-items">
         <h3>PRODUCTS</h3>
         {sale.items.map((item, index) => (

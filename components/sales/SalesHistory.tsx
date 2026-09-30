@@ -13,6 +13,7 @@ interface HistorySale {
   invoiceNumber: string;
   cashierName: string;
   customerName?: string;
+  customerPhone?: string;
   items?: { quantity: number }[];
   paymentMethod: string;
   grandTotal: number;
@@ -80,6 +81,7 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
           <thead className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             <tr>
               <th className="py-3 px-4">Invoice</th>
+              <th className="py-3 px-4">Customer</th>
               <th className="py-3 px-4">Cashier</th>
               <th className="py-3 px-4 hidden md:table-cell">Branch</th>
               <th className="py-3 px-4">Method</th>
@@ -92,13 +94,13 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
           <tbody className="divide-y divide-slate-100">
             {isLoading ? (
               <tr>
-                <td className="py-6 px-4 text-slate-400" colSpan={8}>
+                <td className="py-6 px-4 text-slate-400" colSpan={9}>
                   Loading sales…
                 </td>
               </tr>
             ) : sales.length === 0 ? (
               <tr>
-                <td className="py-6 px-4 text-slate-400" colSpan={8}>
+                <td className="py-6 px-4 text-slate-400" colSpan={9}>
                   No sales recorded yet.
                 </td>
               </tr>
@@ -109,10 +111,13 @@ export function SalesHistory({ refreshKey = 0 }: { refreshKey?: number }) {
                   <tr key={sale._id} className="hover:bg-slate-50/75">
                     <td className="py-3 px-4 font-mono font-medium text-slate-900">{sale.invoiceNumber}</td>
                     <td className="py-3 px-4">
+                      <div className="font-medium text-slate-800">{sale.customerName || "Walk-in"}</div>
+                      {sale.customerPhone && <div className="text-[11px] text-slate-400">{sale.customerPhone}</div>}
+                    </td>
+                    <td className="py-3 px-4">
                       <div className="font-medium text-slate-800">{sale.cashierName}</div>
                       <div className="text-[11px] text-slate-400">
                         {itemCount} {itemCount === 1 ? "item" : "items"}
-                        {sale.customerName ? ` · ${sale.customerName}` : ""}
                       </div>
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell text-slate-500">{branchName(sale.branchId)}</td>

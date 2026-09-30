@@ -18,6 +18,9 @@ import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils";
 import { useBranch } from "@/components/context/BranchContext";
 import { PrintSalePage } from "@/components/print/PrintSalePage";
+import { Customer } from "@/types/customer";
+import { SessionUser } from "@/types";
+import { hasPermission } from "@/lib/auth/permissions";
 
 interface CatalogProduct {
   _id: string;
@@ -68,6 +71,18 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
   const [completedSale, setCompletedSale] = useState<{ id: string; invoiceNumber: string } | null>(null);
   const [defaultPrintFormat, setDefaultPrintFormat] = useState<PrintFormat | null>(null);
   const [printJob, setPrintJob] = useState<{ saleId: string; format: PrintFormat } | null>(null);
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerResults, setCustomerResults] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [isSearchingCustomers, setIsSearchingCustomers] = useState(false);
+  const [showQuickCustomerForm, setShowQuickCustomerForm] = useState(false);
+  const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
+  const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
+
+  const canViewCustomers = permissionsLoaded && currentUser !== null && hasPermission(currentUser, "CUSTOMER_VIEW");
+  const canCreateCustomers = permissionsLoaded && currentUser !== null && hasPermission(currentUser, "CUSTOMER_CREATE");
 
   const branchLockedToAll = selectedBranchId === "ALL" || !selectedBranchId;
 
@@ -87,6 +102,47 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
   useEffect(() => {
     void loadDefaultPrintFormat();
   }, [loadDefaultPrintFormat]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        const data = await response.json();
+        if (isMounted && data.authenticated && data.user) setCurrentUser(data.user);
+      } catch {
+        if (isMounted) setCurrentUser(null);
+      } finally {
+        if (isMounted) setPermissionsLoaded(true);
+      }
+    }
+    void loadCurrentUser();
+    return () => { isMounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canViewCustomers || selectedCustomer) {
+      setCustomerResults([]);
+      return;
+    }
+    const handle = window.setTimeout(async () => {
+      setIsSearchingCustomers(true);
+      try {
+        const params = new URLSearchParams({ status: "active", limit: "8", page: "1" });
+        if (customerSearch.trim()) params.set("search", customerSearch.trim());
+        const response = await fetch(`/api/customers?${params.toString()}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Failed to search customers.");
+        setCustomerResults(data.customers || []);
+      } catch (customerError) {
+        setError(customerError instanceof Error ? customerError.message : "Failed to search customers.");
+        setCustomerResults([]);
+      } finally {
+        setIsSearchingCustomers(false);
+      }
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [canViewCustomers, customerSearch, selectedCustomer]);
 
   const finishPrint = useCallback(() => setPrintJob(null), []);
   const handlePrintError = useCallback((message: string) => {
@@ -208,6 +264,7 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
           discountAmount: safeDiscount,
           paymentMethod,
           paidAmount: paid,
+          ...(selectedCustomer ? { customerId: selectedCustomer._id } : {}),
         }),
       });
       const data = await res.json();
@@ -222,11 +279,42 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
       setCart([]);
       setDiscount("0");
       setPaidAmount("");
+      setSelectedCustomer(null);
+      setCustomerSearch("");
       onSaleCompleted?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete sale.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function createCustomerFromPos(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canCreateCustomers) return;
+    setIsCreatingCustomer(true);
+    setError("");
+    try {
+      const response = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: quickCustomer.name.trim(),
+          phone: quickCustomer.phone.trim(),
+          email: quickCustomer.email.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to create customer.");
+      setSelectedCustomer(data.customer);
+      setCustomerResults([]);
+      setCustomerSearch("");
+      setQuickCustomer({ name: "", phone: "", email: "" });
+      setShowQuickCustomerForm(false);
+    } catch (customerError) {
+      setError(customerError instanceof Error ? customerError.message : "Failed to create customer.");
+    } finally {
+      setIsCreatingCustomer(false);
     }
   }
 
@@ -316,6 +404,61 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
           </div>
           <Badge variant="secondary">{cart.length} items</Badge>
         </div>
+
+        {canViewCustomers && (
+          <section className="space-y-2 border-b border-slate-100 pb-4" aria-label="Sale customer">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="pos-customer-search" className="text-xs font-medium text-slate-600">Customer (optional)</label>
+              {canCreateCustomers && !selectedCustomer && (
+                <button type="button" className="text-xs font-medium text-brand-700 hover:text-brand-900" onClick={() => setShowQuickCustomerForm(true)}>
+                  <Plus className="mr-1 inline h-3.5 w-3.5" />Quick add
+                </button>
+              )}
+            </div>
+            {selectedCustomer ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-brand-200 bg-brand-50/50 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-900">{selectedCustomer.name}</p>
+                  <p className="text-xs text-slate-500">{selectedCustomer.phone || "No phone"}</p>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedCustomer(null)}>Change</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => { setSelectedCustomer(null); setCustomerSearch(""); }}>Remove</Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <input
+                  id="pos-customer-search"
+                  type="search"
+                  value={customerSearch}
+                  onChange={(event) => setCustomerSearch(event.target.value)}
+                  placeholder="Search customer by name or phone..."
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                {(customerResults.length > 0 || isSearchingCustomers) && (
+                  <div className="max-h-36 overflow-y-auto rounded-md border border-slate-200 bg-white">
+                    {isSearchingCustomers && <p className="px-3 py-2 text-xs text-slate-500">Searching customers...</p>}
+                    {customerResults.map((customer) => (
+                      <button
+                        key={customer._id}
+                        type="button"
+                        onClick={() => { setSelectedCustomer(customer); setCustomerResults([]); }}
+                        className="flex w-full items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-left first:border-0 hover:bg-slate-50"
+                      >
+                        <span className="truncate text-sm font-medium text-slate-900">{customer.name}</span>
+                        <span className="shrink-0 text-xs text-slate-500">{customer.phone || "No phone"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {customerSearch.trim() && !isSearchingCustomers && customerResults.length === 0 && (
+                  <p className="text-xs text-slate-500">No active customers found.</p>
+                )}
+              </>
+            )}
+          </section>
+        )}
 
         <div className="max-h-56 overflow-y-auto space-y-2">
           {cart.length === 0 ? (
@@ -467,6 +610,29 @@ export function PosRegister({ onSaleCompleted }: { onSaleCompleted?: () => void 
         onPrintFinished={finishPrint}
         onError={handlePrintError}
       />
+    )}
+    {showQuickCustomerForm && canCreateCustomers && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="presentation">
+        <form onSubmit={createCustomerFromPos} className="w-full max-w-md space-y-4 rounded-lg bg-white p-5 shadow-xl">
+          <h2 className="text-base font-semibold text-slate-900">Quick Add Customer</h2>
+          <label className="block text-xs font-medium text-slate-700">
+            Name *
+            <input required maxLength={160} autoFocus value={quickCustomer.name} onChange={(event) => setQuickCustomer((current) => ({ ...current, name: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-slate-300 px-3 text-sm" />
+          </label>
+          <label className="block text-xs font-medium text-slate-700">
+            Phone
+            <input maxLength={40} value={quickCustomer.phone} onChange={(event) => setQuickCustomer((current) => ({ ...current, phone: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-slate-300 px-3 text-sm" />
+          </label>
+          <label className="block text-xs font-medium text-slate-700">
+            Email
+            <input type="email" maxLength={254} value={quickCustomer.email} onChange={(event) => setQuickCustomer((current) => ({ ...current, email: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-slate-300 px-3 text-sm" />
+          </label>
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button type="button" size="sm" variant="outline" onClick={() => setShowQuickCustomerForm(false)}>Cancel</Button>
+            <Button type="submit" size="sm" isLoading={isCreatingCustomer}>Create & Select</Button>
+          </div>
+        </form>
+      </div>
     )}
     </>
   );

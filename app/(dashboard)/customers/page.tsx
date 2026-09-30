@@ -5,6 +5,7 @@ import { Eye, Pencil, Plus, Search, UserRoundX, Users, X } from "lucide-react";
 import { Customer } from "@/types/customer";
 import { SessionUser } from "@/types";
 import { CustomerForm, customerFormValues, CustomerFormValues } from "@/components/customers/CustomerForm";
+import { CustomerPurchaseHistory } from "@/components/customers/CustomerPurchaseHistory";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { hasPermission } from "@/lib/auth/permissions";
 import { Badge } from "@/components/ui/Badge";
@@ -283,7 +284,10 @@ export default function CustomersPage() {
               <Detail label="Notes" value={detailCustomer.notes} />
             </dl>
             <div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-3">
-              <Placeholder title="Purchase History" />
+              <CustomerPurchaseHistory
+                customerId={detailCustomer._id}
+                canViewSales={currentUser !== null && hasPermission(currentUser, "SALE_VIEW")}
+              />
               <Placeholder title="Invoice History" />
               <Placeholder title="Outstanding Due" />
             </div>
