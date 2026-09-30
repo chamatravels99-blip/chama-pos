@@ -11,6 +11,7 @@ import { Supplier } from "../models/Supplier";
 import { Customer } from "../models/Customer";
 import { StockMovement } from "../models/StockMovement";
 import { AuditLog } from "../models/AuditLog";
+import { CashTransaction } from "../models/CashTransaction";
 import {
   scopeToTenant,
   scopeToBranch,
@@ -48,6 +49,16 @@ import { createProductWithOpeningStock, ProductCreationError, scopeProductStock 
 import { buildCurrentBusinessQuery, getCurrentBusiness } from "../lib/business/business-service";
 import { buildAuthorizedBranchQuery, listAuthorizedBranches } from "../lib/branches/branch-service";
 import { buildSalesQuery } from "../lib/sales/sale-service";
+import {
+  CashValidationError,
+  createCashIn,
+  createCashOut,
+  createExpense,
+  createOpeningCash,
+  getCashSummary,
+  listCashTransactions,
+  parseCashTransactionInput,
+} from "../lib/cash/cash-service";
 import {
   createCustomer,
   deactivateCustomer,
@@ -373,6 +384,268 @@ async function runIsolationTests() {
           "Branches test: a restricted user receives only assigned branch documents"
         );
         passedCount++;
+
+        const cashTestSuffix = Date.now().toString();
+        const cashBranchA = await Branch.create({
+          businessId: bizModzone._id.toString(),
+          name: `Cash Isolation A ${cashTestSuffix}`,
+          code: `CA${cashTestSuffix.slice(-8)}`,
+          status: "active",
+          isMain: false,
+        });
+        const cashBranchA2 = await Branch.create({
+          businessId: bizModzone._id.toString(),
+          name: `Cash Isolation A2 ${cashTestSuffix}`,
+          code: `C2${cashTestSuffix.slice(-8)}`,
+          status: "active",
+          isMain: false,
+        });
+        const cashBranchB = await Branch.create({
+          businessId: bizPhone._id.toString(),
+          name: `Cash Isolation B ${cashTestSuffix}`,
+          code: `CB${cashTestSuffix.slice(-8)}`,
+          status: "active",
+          isMain: false,
+        });
+        const cashTestIds: string[] = [];
+        const cashSaleIds: string[] = [];
+        try {
+          const branchAId = cashBranchA._id.toString();
+          const branchA2Id = cashBranchA2._id.toString();
+          const branchBId = cashBranchB._id.toString();
+          const openingCash = await createOpeningCash(modzoneContext, {
+            branchId: branchAId,
+            amount: 50000,
+            description: "Cash summary opening fixture",
+          });
+          cashTestIds.push(openingCash._id.toString());
+          assert(
+            openingCash.businessId === bizModzone._id.toString() &&
+              openingCash.branchId === branchAId &&
+              openingCash.userId === modzoneContext.userId &&
+              openingCash.type === "OPENING_CASH",
+            "Cash: opening records preserve effective business, branch, user, and type"
+          );
+          passedCount++;
+
+          let duplicateOpeningRejected = false;
+          try {
+            await createOpeningCash(modzoneContext, {
+              branchId: branchAId,
+              amount: 1,
+              description: "Duplicate opening fixture",
+            });
+          } catch (error) {
+            duplicateOpeningRejected = error instanceof CashValidationError &&
+              error.message === "Opening cash has already been recorded for this branch today.";
+          }
+          assert(duplicateOpeningRejected, "Cash: duplicate opening cash for the branch/day is rejected clearly");
+          passedCount++;
+
+          const cashIn = await createCashIn(modzoneContext, {
+            branchId: branchAId,
+            amount: 10000,
+            description: "Cash summary in fixture",
+            businessId: bizPhone._id.toString(),
+            userId: "forged-cash-user",
+          } as Parameters<typeof createCashIn>[1]);
+          cashTestIds.push(cashIn._id.toString());
+          assert(
+            cashIn.businessId === bizModzone._id.toString() && cashIn.userId === modzoneContext.userId,
+            "Cash: forged businessId and userId cannot override the effective tenant or actor"
+          );
+          passedCount++;
+
+          const cashOut = await createCashOut(modzoneContext, {
+            branchId: branchAId,
+            amount: 5000,
+            description: "Cash summary out fixture",
+          });
+          const expense = await createExpense(modzoneContext, {
+            branchId: branchAId,
+            amount: 15000,
+            description: "Cash summary expense fixture",
+            category: "Test",
+          });
+          const otherBranchExpense = await createExpense(modzoneContext, {
+            branchId: branchA2Id,
+            amount: 0.01,
+            description: "Restricted branch fixture",
+          });
+          cashTestIds.push(cashOut._id.toString(), expense._id.toString(), otherBranchExpense._id.toString());
+
+          let forgedBranchRejected = false;
+          try {
+            await createCashIn(modzoneContext, {
+              branchId: branchBId,
+              amount: 1,
+              description: "Foreign branch fixture",
+            });
+          } catch (error) {
+            forgedBranchRejected = error instanceof CashValidationError;
+          }
+          assert(forgedBranchRejected, "Cash: branch belonging to another business is rejected");
+          passedCount++;
+
+          const branchManagerContext: TenantContext = {
+            ...modzoneContext,
+            role: "MANAGER",
+            branchAccess: "SELECTED_BRANCHES",
+            branchIds: [branchAId],
+          };
+          const managerCash = await listCashTransactions(branchManagerContext, { branchId: "ALL" });
+          assert(
+            managerCash.transactions.every((transaction) => transaction.branchId === branchAId),
+            "Cash: branch-restricted manager history stays within assigned branches"
+          );
+          passedCount++;
+          let managerOtherBranchRejected = false;
+          try {
+            await listCashTransactions(branchManagerContext, { branchId: branchA2Id });
+          } catch (error) {
+            managerOtherBranchRejected = error instanceof AuthorizationError || error instanceof TenantSecurityError;
+          }
+          assert(managerOtherBranchRejected, "Cash: branch manager cannot request another branch");
+          passedCount++;
+
+          const businessBCash = await createCashIn(phoneContext, {
+            branchId: branchBId,
+            amount: 7,
+            description: "Business B cash fixture",
+          });
+          cashTestIds.push(businessBCash._id.toString());
+          const businessACash = await listCashTransactions(modzoneContext, { branchId: "ALL" });
+          const businessBCashList = await listCashTransactions(phoneContext, { branchId: "ALL" });
+          assert(
+            businessACash.transactions.some((transaction) => transaction._id === cashIn._id.toString()) &&
+              !businessACash.transactions.some((transaction) => transaction._id === businessBCash._id.toString()) &&
+              businessBCashList.transactions.some((transaction) => transaction._id === businessBCash._id.toString()) &&
+              !businessBCashList.transactions.some((transaction) => transaction._id === cashIn._id.toString()),
+            "Cash: Business A and B history is isolated in both directions"
+          );
+          passedCount++;
+
+          const selectedBusinessACash = await listCashTransactions(platformModzoneContext, { branchId: "ALL" });
+          const selectedBusinessBCash = await listCashTransactions(platformPhoneContext, { branchId: "ALL" });
+          assert(
+            selectedBusinessACash.transactions.every((transaction) => transaction.businessId === bizModzone._id.toString()) &&
+              selectedBusinessBCash.transactions.every((transaction) => transaction.businessId === bizPhone._id.toString()),
+            "Cash: platform history follows only its selected business context"
+          );
+          passedCount++;
+
+          const noCashViewContext: TenantContext = {
+            ...modzoneContext,
+            role: "STOCK_MANAGER",
+            permissions: DEFAULT_ROLE_PERMISSIONS.STOCK_MANAGER,
+          };
+          let cashViewDenied = false;
+          try {
+            await listCashTransactions(noCashViewContext, { branchId: "ALL" });
+          } catch (error) {
+            cashViewDenied = error instanceof AuthorizationError;
+          }
+          assert(cashViewDenied, "Cash permissions: CASH_VIEW is required for transaction history");
+          passedCount++;
+
+          let cashInDenied = false;
+          try {
+            await createCashIn(noCashViewContext, {
+              branchId: branchAId,
+              amount: 1,
+              description: "Unauthorized cash in fixture",
+            });
+          } catch (error) {
+            cashInDenied = error instanceof AuthorizationError;
+          }
+          assert(cashInDenied, "Cash permissions: user without CASH_IN cannot create cash in");
+          passedCount++;
+
+          const noCashOutContext: TenantContext = {
+            ...modzoneContext,
+            role: "CASHIER",
+            permissions: DEFAULT_ROLE_PERMISSIONS.CASHIER,
+          };
+          let cashOutDenied = false;
+          try {
+            await createCashOut(noCashOutContext, {
+              branchId: branchAId,
+              amount: 1,
+              description: "Unauthorized cash out fixture",
+            });
+          } catch (error) {
+            cashOutDenied = error instanceof AuthorizationError;
+          }
+          assert(cashOutDenied, "Cash permissions: cashier without CASH_OUT cannot create cash out");
+          passedCount++;
+
+          let expenseDenied = false;
+          try {
+            await createExpense(noCashViewContext, {
+              branchId: branchAId,
+              amount: 1,
+              description: "Unauthorized expense fixture",
+            });
+          } catch (error) {
+            expenseDenied = error instanceof AuthorizationError;
+          }
+          assert(expenseDenied, "Cash permissions: user without EXPENSE_CREATE cannot create expenses");
+          passedCount++;
+
+          const cashSaleMethods = ["cash", "card", "split"] as const;
+          for (const method of cashSaleMethods) {
+            const sale = await Sale.create({
+              businessId: bizModzone._id.toString(),
+              branchId: branchAId,
+              invoiceNumber: `CASH-ISO-${cashTestSuffix}-${method}`,
+              cashierUserId: modzoneContext.userId,
+              cashierName: "Cash isolation test",
+              items: [{
+                productId: new mongoose.Types.ObjectId().toString(),
+                name: "Cash summary fixture",
+                sku: `CASH-${method.toUpperCase()}`,
+                unitPrice: 120000,
+                costPrice: 0,
+                quantity: 1,
+                discountAmount: 0,
+                taxAmount: 0,
+                subtotal: 120000,
+                total: 120000,
+              }],
+              subtotal: 120000,
+              discountTotal: 0,
+              taxTotal: 0,
+              grandTotal: 120000,
+              paidAmount: method === "cash" ? 122000 : 120000,
+              changeAmount: method === "cash" ? 2000 : 0,
+              paymentMethod: method,
+              paymentStatus: "paid",
+              status: "completed",
+            });
+            cashSaleIds.push(sale._id.toString());
+          }
+
+          const cashDay = new Date().toISOString().slice(0, 10);
+          const cashSummary = await getCashSummary(modzoneContext, {
+            branchId: branchAId,
+            dateFrom: cashDay,
+            dateTo: cashDay,
+          });
+          assert(
+            cashSummary.openingCash === 50000 &&
+              cashSummary.cashSales === 120000 &&
+              cashSummary.cashIn === 10000 &&
+              cashSummary.cashOut === 5000 &&
+              cashSummary.expenses === 15000 &&
+              cashSummary.currentExpectedCash === 160000,
+            "Cash summary: opening + cash sales + cash in - cash out - expenses equals expected cash"
+          );
+          passedCount++;
+        } finally {
+          if (cashTestIds.length) await CashTransaction.deleteMany({ _id: { $in: cashTestIds } });
+          if (cashSaleIds.length) await Sale.deleteMany({ _id: { $in: cashSaleIds } });
+          await Branch.deleteMany({ _id: { $in: [cashBranchA._id, cashBranchA2._id, cashBranchB._id] } });
+        }
 
         const createdOpeningProductIds: string[] = [];
         const testSkuPrefix = `OPEN-${Date.now()}`;
@@ -1211,6 +1484,41 @@ async function runIsolationTests() {
       "Test 18g: Business Owner possesses all store-level permissions"
     );
     passedCount += 9;
+
+    for (const [amount, label] of [
+      [0, "zero"],
+      [-1, "negative"],
+      [Number.NaN, "NaN"],
+      [Number.POSITIVE_INFINITY, "Infinity"],
+      [1.001, "excess precision"],
+    ] as [number, string][]) {
+      let amountRejected = false;
+      try {
+        parseCashTransactionInput({
+          type: "CASH_IN",
+          branchId: "branch_valid",
+          amount,
+          description: "Cash amount validation",
+        });
+      } catch (error) {
+        amountRejected = error instanceof CashValidationError;
+      }
+      assert(amountRejected, `Cash validation: ${label} amount is rejected`);
+      passedCount++;
+    }
+    let invalidCashTypeRejected = false;
+    try {
+      parseCashTransactionInput({
+        type: "CASH_SALE",
+        branchId: "branch_valid",
+        amount: 1,
+        description: "Invalid cash transaction type",
+      });
+    } catch (error) {
+      invalidCashTypeRejected = error instanceof CashValidationError;
+    }
+    assert(invalidCashTypeRejected, "Cash validation: invalid transaction type is rejected");
+    passedCount++;
 
     // TEST 19: Audit Log Password Sanitization Invariant
     const sensitiveLogInput = {

@@ -28,6 +28,14 @@ export type StandardPermission =
   | "SALE_VIEW_OTHER_CASHIERS"
   | "SALE_CANCEL"
   | "SALE_REFUND"
+  // Cash Management
+  | "CASH_VIEW"
+  | "CASH_IN"
+  | "CASH_OUT"
+  // Cash Management
+  | "CASH_VIEW"
+  | "CASH_IN"
+  | "CASH_OUT"
   // Products
   | "PRODUCT_VIEW"
   | "PRODUCT_CREATE"
@@ -131,6 +139,22 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "SALE_VIEW_OTHER_CASHIERS", label: "View Other Cashiers", description: "View sales processed by other cashiers" },
       { key: "SALE_CANCEL", label: "Cancel Sales", description: "Void or cancel unpaid transactions" },
       { key: "SALE_REFUND", label: "Process Refunds", description: "Issue refunds on completed orders" },
+    ],
+  },
+  {
+    category: "Cash Management",
+    permissions: [
+      { key: "CASH_VIEW", label: "View Cash Management", description: "View branch cash balances and transaction history" },
+      { key: "CASH_IN", label: "Record Cash In", description: "Record opening cash and incoming cash movements" },
+      { key: "CASH_OUT", label: "Record Cash Out", description: "Record outgoing cash movements" },
+    ],
+  },
+  {
+    category: "Cash Management",
+    permissions: [
+      { key: "CASH_VIEW", label: "View Cash Management", description: "View branch cash balances and transaction history" },
+      { key: "CASH_IN", label: "Record Cash In", description: "Record opening cash and incoming cash movements" },
+      { key: "CASH_OUT", label: "Record Cash Out", description: "Record outgoing cash movements" },
     ],
   },
   {
@@ -241,6 +265,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, StandardPermission[]> = 
     "SALE_VIEW",
     "SALE_CANCEL",
     "SALE_REFUND",
+    "CASH_VIEW",
+    "CASH_IN",
+    "CASH_OUT",
+    "CASH_VIEW",
+    "CASH_IN",
+    "CASH_OUT",
     "PRODUCT_VIEW",
     "PRODUCT_CREATE",
     "PRODUCT_EDIT",
@@ -270,6 +300,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, StandardPermission[]> = 
     "POS_ACCESS",
     "SALE_CREATE",
     "SALE_VIEW",
+    "CASH_VIEW",
+    "CASH_IN",
+    "CASH_VIEW",
+    "CASH_IN",
     "PRODUCT_VIEW",
     "STOCK_VIEW",
     "CUSTOMER_VIEW",
@@ -290,6 +324,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, StandardPermission[]> = 
   ACCOUNTANT: [
     "DASHBOARD_VIEW",
     "SALE_VIEW",
+    "CASH_VIEW",
+    "CASH_VIEW",
     "EXPENSE_VIEW",
     "EXPENSE_CREATE",
     "EXPENSE_EDIT",

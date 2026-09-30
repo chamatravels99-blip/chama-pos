@@ -6,6 +6,7 @@ import {
   Users,
   Truck,
   Receipt,
+  Banknote,
   BarChart3,
   Settings,
   Building2,
@@ -84,6 +85,20 @@ export const tenantNavigation: NavSection[] = [
         icon: Truck,
         requiresPermission: "SUPPLIER_VIEW",
         description: "Vendor directory and purchase orders",
+      },
+      {
+        title: "Cash Management",
+        href: "/cash",
+        icon: Banknote,
+        requiresPermission: "CASH_VIEW",
+        description: "Opening cash, cash movements, expenses, and expected balance",
+      },
+      {
+        title: "Cash Management",
+        href: "/cash",
+        icon: Banknote,
+        requiresPermission: "CASH_VIEW",
+        description: "Opening cash, cash movements, expenses, and expected balance",
       },
       {
         title: "Expenses",
