@@ -94,13 +94,6 @@ export const tenantNavigation: NavSection[] = [
         description: "Opening cash, cash movements, expenses, and expected balance",
       },
       {
-        title: "Cash Management",
-        href: "/cash",
-        icon: Banknote,
-        requiresPermission: "CASH_VIEW",
-        description: "Opening cash, cash movements, expenses, and expected balance",
-      },
-      {
         title: "Expenses",
         href: "/expenses",
         icon: Receipt,

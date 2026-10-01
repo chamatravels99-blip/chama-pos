@@ -70,7 +70,7 @@ export function ThermalReceipt({
       </section>
 
       <footer className="thermal-center thermal-footer">
-        <InvoiceBarcode value={sale.invoiceNumber} />
+        <InvoiceBarcode value={sale.invoiceNumber} maxWidthMm={64} />
         {business.settings?.receiptFooter && <p>{business.settings.receiptFooter}</p>}
         <p className="thermal-thank-you">THANK YOU</p>
       </footer>

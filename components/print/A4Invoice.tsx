@@ -41,6 +41,7 @@ export function A4Invoice({
             <div><dt>Payment</dt><dd>{paymentMethodLabel(sale.paymentMethod)}</dd></div>
             <div><dt>Status</dt><dd>{paymentStatusLabel(sale.paymentStatus)}</dd></div>
           </dl>
+          <InvoiceBarcode value={sale.invoiceNumber} maxWidthMm={64} />
         </div>
       </header>
 
@@ -102,7 +103,6 @@ export function A4Invoice({
           <div><span>Customer Signature</span></div>
           <div><span>Authorized Signature</span></div>
         </div>
-        <InvoiceBarcode value={sale.invoiceNumber} />
         <p className="invoice-thank-you">THANK YOU FOR YOUR BUSINESS</p>
         {business.settings?.receiptFooter && <p className="invoice-receipt-footer">{business.settings.receiptFooter}</p>}
       </footer>

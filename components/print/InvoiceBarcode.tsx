@@ -12,22 +12,28 @@ const CODE_39: Record<string, string> = {
   "/": "nwnwnnnwn", "+": "nwnnnwnwn", "%": "nnnwnwnwn", "*": "nwnnwnwnn",
 };
 
-const BAR_UNIT_MM = 0.16;
+const BAR_UNIT_MM = 0.12;
 
-export function InvoiceBarcode({ value }: { value: string }) {
+export function InvoiceBarcode({ value, maxWidthMm = 64 }: { value: string; maxWidthMm?: number }) {
   const barcodeValue = value.toUpperCase().replace(/[^0-9A-Z. $/+%-]/g, "");
   if (!barcodeValue) return null;
+  const characters = `*${barcodeValue}*`.split("");
+  const widthUnits = characters.reduce(
+    (total, character) => total + CODE_39[character].split("").reduce((width, element) => width + (element === "w" ? 3 : 1), 0) + 8,
+    0
+  );
+  const barUnitMm = Math.min(BAR_UNIT_MM, maxWidthMm / widthUnits);
 
   return (
-    <div className="invoice-barcode" aria-label={`Barcode for ${barcodeValue}`}>
+    <div className="invoice-barcode" aria-label={`Barcode for ${barcodeValue}`} style={{ maxWidth: `${maxWidthMm}mm` }}>
       <div className="invoice-barcode-bars" aria-hidden="true">
-        {`*${barcodeValue}*`.split("").map((character, characterIndex) => (
-          <span className="invoice-barcode-character" key={`${character}-${characterIndex}`}>
+        {characters.map((character, characterIndex) => (
+          <span className="invoice-barcode-character" key={`${character}-${characterIndex}`} style={{ gap: `${barUnitMm}mm` }}>
             {CODE_39[character].split("").map((width, elementIndex) => (
               <span
                 className={elementIndex % 2 === 0 ? "invoice-barcode-bar" : "invoice-barcode-space"}
                 key={elementIndex}
-                style={{ width: `${BAR_UNIT_MM * (width === "w" ? 3 : 1)}mm` }}
+                style={{ width: `${barUnitMm * (width === "w" ? 3 : 1)}mm` }}
               />
             ))}
           </span>

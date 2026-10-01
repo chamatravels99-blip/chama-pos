@@ -100,12 +100,12 @@ body {
 .thermal-footer { margin-top: 3mm; padding-top: 2mm; border-top: 1px dashed #555; }
 .thermal-thank-you { margin-top: 2mm !important; font-weight: 700; }
 
-.invoice-barcode { display: flex; flex-direction: column; align-items: center; gap: 1mm; margin: 4mm auto 0; }
-.invoice-barcode-bars { display: flex; align-items: stretch; }
-.invoice-barcode-character { display: flex; gap: 0.16mm; }
-.invoice-barcode-bar, .invoice-barcode-space { display: block; height: 12mm; }
+.invoice-barcode { display: flex; width: fit-content; max-width: 100%; flex-direction: column; align-items: center; gap: 1mm; margin: 4mm auto 0; }
+.invoice-barcode-bars { display: flex; max-width: 100%; align-items: stretch; }
+.invoice-barcode-character { display: flex; flex: 0 0 auto; }
+.invoice-barcode-bar, .invoice-barcode-space { display: block; height: 9mm; }
 .invoice-barcode-bar { background: #000; }
-.invoice-barcode-value { font-family: monospace; font-size: 8pt; }
+.invoice-barcode-value { max-width: 100%; overflow-wrap: anywhere; font-family: monospace; font-size: 8pt; }
 
 .invoice-paper {
   box-sizing: border-box;

@@ -150,14 +150,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    category: "Cash Management",
-    permissions: [
-      { key: "CASH_VIEW", label: "View Cash Management", description: "View branch cash balances and transaction history" },
-      { key: "CASH_IN", label: "Record Cash In", description: "Record opening cash and incoming cash movements" },
-      { key: "CASH_OUT", label: "Record Cash Out", description: "Record outgoing cash movements" },
-    ],
-  },
-  {
     category: "Products",
     permissions: [
       { key: "PRODUCT_VIEW", label: "View Products", description: "View product catalog and prices" },

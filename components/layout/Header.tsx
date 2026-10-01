@@ -314,14 +314,6 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
                   </Link>
                 )}
                 <Link
-                  href="/users"
-                  onClick={() => setProfileDropdownOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
-                >
-                  <Building className="h-3.5 w-3.5 text-slate-400" />
-                  Staff & Users
-                </Link>
-                <Link
                   href="/settings"
                   onClick={() => setProfileDropdownOpen(false)}
                   className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
